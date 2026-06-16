@@ -1729,47 +1729,91 @@
   )
 )
 
-(defun inhl:sort-frames (lst / avg-h row-tolerance rows current-row sorted-list)
-  ;; Tính chiều cao trung bình của các khung bản vẽ để làm khoảng sai số gom hàng
-  (setq avg-h (/ (apply '+ (mapcar '(lambda (x) (nth 4 x)) lst)) (float (length lst))))
-  (setq row-tolerance (* avg-h 0.5)) ; Sai số cho phép thuộc cùng 1 hàng (50% chiều cao)
-
-  ;; Bước 1: Sắp xếp theo trục Y giảm dần (từ trên xuống dưới)
+(defun inhl:sort-frame-rows (lst right-to-left / avg-h row-tolerance rows current-row sorted-list row)
+  (setq avg-h (/ (apply '+ (mapcar '(lambda (x) (nth 5 x)) lst)) (float (length lst))))
+  (setq row-tolerance (* avg-h 0.5))
   (setq lst (vl-sort lst '(lambda (a b) (> (cadr (nth 3 a)) (cadr (nth 3 b))))))
-
-  ;; Bước 2: Gom nhóm các khung bản vẽ vào các hàng (row)
   (setq rows nil
         current-row nil)
   (foreach item lst
     (if (null current-row)
       (setq current-row (list item))
       (if (< (abs (- (cadr (nth 3 item)) (cadr (nth 3 (car current-row))))) row-tolerance)
-        (setq current-row (cons item current-row)) ; Cùng hàng
+        (setq current-row (cons item current-row))
         (progn
           (setq rows (cons current-row rows))
-          (setq current-row (list item)) ; Hàng mới
+          (setq current-row (list item))
         )
       )
     )
   )
   (if current-row (setq rows (cons current-row rows)))
-  (setq rows (reverse rows))
-
-  ;; Bước 3: Sắp xếp từng hàng theo trục X tăng dần (từ trái sang phải) và gộp lại
-  (setq sorted-list nil)
+  (setq rows (reverse rows)
+        sorted-list nil)
   (foreach row rows
-    (setq row (vl-sort row '(lambda (a b) (< (car (nth 3 a)) (car (nth 3 b))))))
+    (setq row
+      (vl-sort row
+        (if right-to-left
+          '(lambda (a b) (> (car (nth 3 a)) (car (nth 3 b))))
+          '(lambda (a b) (< (car (nth 3 a)) (car (nth 3 b))))
+        )
+      )
+    )
     (setq sorted-list (append sorted-list row))
   )
   sorted-list
 )
 
-(defun inhl:sort-frames-by-layout (lst layout-names / result layout-name frames)
+(defun inhl:sort-frame-columns (lst bottom-to-top / avg-w col-tolerance cols current-col sorted-list col)
+  (setq avg-w (/ (apply '+ (mapcar '(lambda (x) (nth 4 x)) lst)) (float (length lst))))
+  (setq col-tolerance (* avg-w 0.5))
+  (setq lst (vl-sort lst '(lambda (a b) (< (car (nth 3 a)) (car (nth 3 b))))))
+  (setq cols nil
+        current-col nil)
+  (foreach item lst
+    (if (null current-col)
+      (setq current-col (list item))
+      (if (< (abs (- (car (nth 3 item)) (car (nth 3 (car current-col))))) col-tolerance)
+        (setq current-col (cons item current-col))
+        (progn
+          (setq cols (cons current-col cols))
+          (setq current-col (list item))
+        )
+      )
+    )
+  )
+  (if current-col (setq cols (cons current-col cols)))
+  (setq cols (reverse cols)
+        sorted-list nil)
+  (foreach col cols
+    (setq col
+      (vl-sort col
+        (if bottom-to-top
+          '(lambda (a b) (< (cadr (nth 3 a)) (cadr (nth 3 b))))
+          '(lambda (a b) (> (cadr (nth 3 a)) (cadr (nth 3 b))))
+        )
+      )
+    )
+    (setq sorted-list (append sorted-list col))
+  )
+  sorted-list
+)
+
+(defun inhl:sort-frames (lst sort-order)
+  (cond
+    ((= sort-order "col-tb") (inhl:sort-frame-columns lst nil))
+    ((= sort-order "row-rl") (inhl:sort-frame-rows lst T))
+    ((= sort-order "col-bt") (inhl:sort-frame-columns lst T))
+    (T (inhl:sort-frame-rows lst nil))
+  )
+)
+
+(defun inhl:sort-frames-by-layout (lst layout-names sort-order / result layout-name frames)
   (setq result nil)
   (foreach layout-name layout-names
     (setq frames (vl-remove-if-not '(lambda (x) (= (nth 6 x) layout-name)) lst))
     (if frames
-      (setq result (append result (inhl:sort-frames frames)))
+      (setq result (append result (inhl:sort-frames frames sort-order)))
     )
   )
   result
@@ -1787,7 +1831,7 @@
                 raw-printer-names all-printer-names printer-names current-printer printer-idx
                 global-canonicals global-localizeds ctb-names ctb-display-names
                 current-ctb ctb-idx dcl-file f dcl-id result
-                layer-names block-names layer-idx block-idx frame-mode selected-layer selected-block selected-layouts
+                layer-names block-names layer-idx block-idx frame-mode sort-order selected-layer selected-block selected-layouts
                 sel-printer-idx sel-paper-idx sel-ctb-idx sel-layer-idx sel-block-idx
                 printer-name plot-printer-name paper-size ctb-style
                 sample-ent dxf-sample sample-layer ent-type dxf pt1 pt2
@@ -1795,6 +1839,7 @@
                 w h center orientation plot-rotation success-count total-count plot-ok initial-papers paper-idx
                 frame-landscape frame-media frame-paper frame-paper-localized frame-paper-landscape combine-pdf temp-dir temp-pdf-files temp-pdf final-pdf merge-ok
                 enjicad-extra-folders enjicad-session-snapshot
+                ui-label-w ui-control-w ui-list-w ui-order-w ui-count-w ui-select-w ui-reset-w
                 saved-settings saved-printer saved-paper saved-ctb canonical-paper)
   
   ;; Thiết lập Bẫy lỗi để khôi phục hệ thống khi người dùng Esc
@@ -1940,12 +1985,29 @@
   (if (null block-names) (setq block-names (list "<Không có block>")))
   (setq block-idx 0)
   (setq frame-mode "layer")
+  (setq sort-order "row-lr")
   (setq selected-layouts layout-names)
   (setq sel-printer-idx printer-idx)
   (setq sel-paper-idx (inhl:safe-index sel-paper-idx global-localizeds))
   (setq sel-ctb-idx ctb-idx)
   (setq sel-layer-idx layer-idx)
   (setq sel-block-idx block-idx)
+  (if (inhl:enjicad-p)
+    (setq ui-label-w 20
+          ui-control-w 30
+          ui-list-w 54
+          ui-order-w 29
+          ui-count-w 8
+          ui-select-w 13
+          ui-reset-w 5)
+    (setq ui-label-w 24
+          ui-control-w 36
+          ui-list-w 61
+          ui-order-w 32
+          ui-count-w 9
+          ui-select-w 15
+          ui-reset-w 6)
+  )
 
   (setq result 2)
   (while (= result 2)
@@ -1957,46 +2019,56 @@
   (write-line "    : boxed_column {" f)
   (write-line "        label = \"Cấu hình Máy in và Khổ giấy\";" f)
   (write-line "        : row {" f)
-  (write-line "            : text { label = \"Máy in (Printer/Plotter)\"; width = 24; fixed_width = true; }" f)
-  (write-line "            : popup_list { key = \"printer_list\"; width = 36; fixed_width = true; }" f)
+  (write-line (strcat "            : text { label = \"Máy in (Printer/Plotter)\"; width = " (itoa ui-label-w) "; fixed_width = true; }") f)
+  (write-line (strcat "            : popup_list { key = \"printer_list\"; width = " (itoa ui-control-w) "; fixed_width = true; }") f)
   (write-line "        }" f)
   (write-line "        : row {" f)
-  (write-line "            : text { label = \"Khổ giấy (Paper size)\"; width = 24; fixed_width = true; }" f)
-  (write-line "            : popup_list { key = \"paper_list\"; width = 36; fixed_width = true; }" f)
+  (write-line (strcat "            : text { label = \"Khổ giấy (Paper size)\"; width = " (itoa ui-label-w) "; fixed_width = true; }") f)
+  (write-line (strcat "            : popup_list { key = \"paper_list\"; width = " (itoa ui-control-w) "; fixed_width = true; }") f)
   (write-line "        }" f)
   (write-line "        : row {" f)
-  (write-line "            : text { label = \"Nét in (Plot style)\"; width = 24; fixed_width = true; }" f)
-  (write-line "            : popup_list { key = \"ctb_list\"; width = 36; fixed_width = true; }" f)
+  (write-line (strcat "            : text { label = \"Nét in (Plot style)\"; width = " (itoa ui-label-w) "; fixed_width = true; }") f)
+  (write-line (strcat "            : popup_list { key = \"ctb_list\"; width = " (itoa ui-control-w) "; fixed_width = true; }") f)
   (write-line "        }" f)
   (write-line "    }" f)
   (write-line "    : boxed_column {" f)
   (write-line "        label = \"Chọn khung in\";" f)
   (write-line "        : spacer_0 { }" f)
   (write-line "        : row {" f)
-  (write-line "            : radio_button { key = \"mode_layer\"; label = \"Theo Layer\"; width = 24; fixed_width = true; }" f)
-  (write-line "            : popup_list { key = \"layer_list\"; width = 36; fixed_width = true; }" f)
+  (write-line (strcat "            : radio_button { key = \"mode_layer\"; label = \"Theo Layer\"; width = " (itoa ui-label-w) "; fixed_width = true; }") f)
+  (write-line (strcat "            : popup_list { key = \"layer_list\"; width = " (itoa ui-control-w) "; fixed_width = true; }") f)
   (write-line "        }" f)
   (write-line "        : row {" f)
-  (write-line "            : radio_button { key = \"mode_block\"; label = \"Theo Title Block\"; width = 24; fixed_width = true; }" f)
-  (write-line "            : popup_list { key = \"block_list\"; width = 36; fixed_width = true; }" f)
+  (write-line (strcat "            : radio_button { key = \"mode_block\"; label = \"Theo Title Block\"; width = " (itoa ui-label-w) "; fixed_width = true; }") f)
+  (write-line (strcat "            : popup_list { key = \"block_list\"; width = " (itoa ui-control-w) "; fixed_width = true; }") f)
   (write-line "        }" f)
   (write-line "        : row {" f)
-  (write-line "            : radio_button { key = \"mode_manual\"; label = \"Theo Khung tên chọn\"; width = 24; fixed_width = true; }" f)
+  (write-line (strcat "            : radio_button { key = \"mode_manual\"; label = \"Theo Khung tên chọn\"; width = " (itoa ui-label-w) "; fixed_width = true; }") f)
   (write-line "            : row {" f)
-  (write-line "                width = 36;" f)
+  (write-line (strcat "                width = " (itoa ui-control-w) ";") f)
   (write-line "                fixed_width = true;" f)
-  (write-line "                : spacer { width = 1.5; fixed_width = true; }" f)
-  (write-line (strcat "                : text { key = \"manual_count\"; label = \"Đã chọn:" (itoa (length *inhl-manual-drawings*)) "\"; width = 9; fixed_width = true; alignment = centered; }") f)
-  (write-line "                : button { key = \"select_drawings\"; label = \"Chọn khung tên\"; width = 15; fixed_width = true; height = 0.75; fixed_height = true; }" f)
-  (write-line "                : button { key = \"reset_drawings\"; label = \"Reset\"; width = 6; fixed_width = true; height = 0.75; fixed_height = true; }" f)
+  (write-line (strcat "                : text { key = \"manual_count\"; label = \"\"; width = " (itoa ui-count-w) "; fixed_width = true; alignment = centered; }") f)
+  (write-line (strcat "                : button { key = \"select_drawings\"; label = \"Chọn khung tên\"; width = " (itoa ui-select-w) "; fixed_width = true; height = 0.75; fixed_height = true; }") f)
+  (write-line (strcat "                : button { key = \"reset_drawings\"; label = \"Reset\"; width = " (itoa ui-reset-w) "; fixed_width = true; height = 0.75; fixed_height = true; }") f)
   (write-line "            }" f)
   (write-line "        }" f)
   (write-line "        : spacer { height = 0.05; fixed_height = true; }" f)
   (write-line "    }" f)
   (write-line "    : boxed_column {" f)
+  (write-line "        label = \"Thứ tự in\";" f)
+  (write-line "        : row {" f)
+  (write-line (strcat "            : radio_button { key = \"order_row_lr\"; label = \"Theo hàng: trái->phải, trên->dưới\"; width = " (itoa ui-order-w) "; fixed_width = true; }") f)
+  (write-line (strcat "            : radio_button { key = \"order_col_tb\"; label = \"Theo cột: trên->dưới, trái->phải\"; width = " (itoa ui-order-w) "; fixed_width = true; }") f)
+  (write-line "        }" f)
+  (write-line "        : row {" f)
+  (write-line (strcat "            : radio_button { key = \"order_row_rl\"; label = \"Theo hàng: phải->trái, trên->dưới\"; width = " (itoa ui-order-w) "; fixed_width = true; }") f)
+  (write-line (strcat "            : radio_button { key = \"order_col_bt\"; label = \"Theo cột: dưới->trên, trái->phải\"; width = " (itoa ui-order-w) "; fixed_width = true; }") f)
+  (write-line "        }" f)
+  (write-line "    }" f)
+  (write-line "    : boxed_column {" f)
   (write-line "        label = \"Chọn vùng in\";" f)
   (write-line "        : row {" f)
-  (write-line "            : list_box { key = \"layout_list\"; width = 61; height = 10; multiple_select = true; }" f)
+  (write-line (strcat "            : list_box { key = \"layout_list\"; width = " (itoa ui-list-w) "; height = 10; multiple_select = true; }") f)
   (write-line "            : button { key = \"select_all_layouts\"; label = \"All\"; mnemonic = \"A\"; width = 6; fixed_width = true; alignment = top; }" f)
   (write-line "        }" f)
   (write-line "        : spacer { height = 0.02; fixed_height = true; }" f)
@@ -2114,7 +2186,26 @@
   (end_list)
   (set_tile "layout_list" (inhl:layout-selection-string selected-layouts layout-names))
   (mode_tile "layout_list" 2)
-  (set_tile "manual_count" (strcat "Đã chọn:" (itoa (length *inhl-manual-drawings*))))
+  (set_tile "order_row_lr" (if (= sort-order "row-lr") "1" "0"))
+  (set_tile "order_col_tb" (if (= sort-order "col-tb") "1" "0"))
+  (set_tile "order_row_rl" (if (= sort-order "row-rl") "1" "0"))
+  (set_tile "order_col_bt" (if (= sort-order "col-bt") "1" "0"))
+
+  (defun inhl:update-manual-count ( / )
+    (set_tile
+      "manual_count"
+      (strcat "Đã chọn:" (itoa (length *inhl-manual-drawings*)))
+    )
+  )
+  (inhl:update-manual-count)
+
+  (defun inhl:set-order-enabled (enabled / mode)
+    (setq mode (if enabled 0 1))
+    (mode_tile "order_row_lr" mode)
+    (mode_tile "order_col_tb" mode)
+    (mode_tile "order_row_rl" mode)
+    (mode_tile "order_col_bt" mode)
+  )
 
   (cond
     ((= frame-mode "manual")
@@ -2123,6 +2214,7 @@
       (set_tile "mode_manual" "1")
       (mode_tile "layer_list" 1)
       (mode_tile "block_list" 1)
+      (inhl:set-order-enabled nil)
     )
     ((= frame-mode "block")
       (set_tile "mode_layer" "0")
@@ -2130,6 +2222,7 @@
       (set_tile "mode_manual" "0")
       (mode_tile "layer_list" 1)
       (mode_tile "block_list" 0)
+      (inhl:set-order-enabled T)
     )
     (t
       (set_tile "mode_layer" "1")
@@ -2137,6 +2230,7 @@
       (set_tile "mode_manual" "0")
       (mode_tile "layer_list" 0)
       (mode_tile "block_list" 1)
+      (inhl:set-order-enabled T)
     )
   )
 
@@ -2154,18 +2248,30 @@
     (setq sel-layer-idx (inhl:safe-index (inhl:get-tile-int "layer_list" sel-layer-idx) layer-names))
     (setq sel-block-idx (inhl:safe-index (inhl:get-tile-int "block_list" sel-block-idx) block-names))
     (setq selected-layouts (inhl:selected-layout-names (get_tile "layout_list") layout-names))
+    (setq sort-order
+      (cond
+        ((= (get_tile "order_col_tb") "1") "col-tb")
+        ((= (get_tile "order_row_rl") "1") "row-rl")
+        ((= (get_tile "order_col_bt") "1") "col-bt")
+        (T "row-lr")
+      )
+    )
   )
 
   ;; Hành động khi tương tác trên Dialog
   (action_tile "printer_list" "(progn (setq sel-printer-idx (inhl:safe-index (atoi $value) printer-names)) (update-papers sel-printer-idx))")
-  (action_tile "mode_layer" "(progn (setq frame-mode \"layer\") (set_tile \"mode_layer\" \"1\") (set_tile \"mode_block\" \"0\") (set_tile \"mode_manual\" \"0\") (mode_tile \"layer_list\" 0) (mode_tile \"block_list\" 1))")
-  (action_tile "mode_block" "(progn (setq frame-mode \"block\") (set_tile \"mode_layer\" \"0\") (set_tile \"mode_block\" \"1\") (set_tile \"mode_manual\" \"0\") (mode_tile \"layer_list\" 1) (mode_tile \"block_list\" 0))")
-  (action_tile "mode_manual" "(progn (setq frame-mode \"manual\") (set_tile \"mode_layer\" \"0\") (set_tile \"mode_block\" \"0\") (set_tile \"mode_manual\" \"1\") (mode_tile \"layer_list\" 1) (mode_tile \"block_list\" 1))")
+  (action_tile "mode_layer" "(progn (setq frame-mode \"layer\") (set_tile \"mode_layer\" \"1\") (set_tile \"mode_block\" \"0\") (set_tile \"mode_manual\" \"0\") (mode_tile \"layer_list\" 0) (mode_tile \"block_list\" 1) (inhl:set-order-enabled T) (inhl:update-manual-count))")
+  (action_tile "mode_block" "(progn (setq frame-mode \"block\") (set_tile \"mode_layer\" \"0\") (set_tile \"mode_block\" \"1\") (set_tile \"mode_manual\" \"0\") (mode_tile \"layer_list\" 1) (mode_tile \"block_list\" 0) (inhl:set-order-enabled T) (inhl:update-manual-count))")
+  (action_tile "mode_manual" "(progn (setq frame-mode \"manual\") (set_tile \"mode_layer\" \"0\") (set_tile \"mode_block\" \"0\") (set_tile \"mode_manual\" \"1\") (mode_tile \"layer_list\" 1) (mode_tile \"block_list\" 1) (inhl:set-order-enabled nil) (inhl:update-manual-count))")
   (action_tile "layer_list" "(setq sel-layer-idx (inhl:safe-index (atoi $value) layer-names))")
   (action_tile "block_list" "(setq sel-block-idx (inhl:safe-index (atoi $value) block-names))")
+  (action_tile "order_row_lr" "(progn (setq sort-order \"row-lr\") (set_tile \"order_row_lr\" \"1\") (set_tile \"order_col_tb\" \"0\") (set_tile \"order_row_rl\" \"0\") (set_tile \"order_col_bt\" \"0\"))")
+  (action_tile "order_col_tb" "(progn (setq sort-order \"col-tb\") (set_tile \"order_row_lr\" \"0\") (set_tile \"order_col_tb\" \"1\") (set_tile \"order_row_rl\" \"0\") (set_tile \"order_col_bt\" \"0\"))")
+  (action_tile "order_row_rl" "(progn (setq sort-order \"row-rl\") (set_tile \"order_row_lr\" \"0\") (set_tile \"order_col_tb\" \"0\") (set_tile \"order_row_rl\" \"1\") (set_tile \"order_col_bt\" \"0\"))")
+  (action_tile "order_col_bt" "(progn (setq sort-order \"col-bt\") (set_tile \"order_row_lr\" \"0\") (set_tile \"order_col_tb\" \"0\") (set_tile \"order_row_rl\" \"0\") (set_tile \"order_col_bt\" \"1\"))")
   (action_tile "select_all_layouts" "(progn (set_tile \"layout_list\" (inhl:index-string (length layout-names))) (mode_tile \"layout_list\" 2))")
   (action_tile "select_drawings" "(progn (inhl:capture-dp-dialog-state) (setq frame-mode \"manual\") (done_dialog 2))")
-  (action_tile "reset_drawings" "(progn (inhl:reset-manual-drawings) (setq frame-mode \"manual\") (set_tile \"manual_count\" \"Đã chọn:0\"))")
+  (action_tile "reset_drawings" "(progn (inhl:reset-manual-drawings) (setq frame-mode \"manual\") (inhl:update-manual-count))")
   (action_tile "accept" "
     (inhl:capture-dp-dialog-state)
     (if (null global-canonicals)
@@ -2314,7 +2420,7 @@
               ;; Drawing thủ công giữ đúng thứ tự click; các mode còn lại sắp xếp tự động.
               (inhl:show-progress "DAC Plotter: Đang sắp xếp danh sách in...")
               (if (/= frame-mode "manual")
-                (setq frame-list (inhl:sort-frames-by-layout frame-list layout-names))
+                (setq frame-list (inhl:sort-frames-by-layout frame-list layout-names sort-order))
               )
               
               (setq success-count 0)

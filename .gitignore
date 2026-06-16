@@ -1,0 +1,16 @@
+# Exclude AI agent directories and rule files
+.agents/
+AGENTS.md
+
+# Exclude test files and directories
+test/
+_DAC_Plotter_Temp/
+
+# Exclude archives and documents
+*.zip
+*.pdf
+
+# Exclude CAD temporary/lock files
+*.dwl
+*.dwl2
+*.tmp

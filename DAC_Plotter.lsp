@@ -1536,6 +1536,7 @@
   (vla-put-PlotType layout 4) ; acWindow
   (vla-put-UseStandardScale layout :vlax-true)
   (vla-put-StandardScale layout 0) ; acScaleToFit
+  (vl-catch-all-apply 'vla-put-PlotOrigin (list layout (inhl:point2d '(0.0 0.0))))
   (vla-put-CenterPlot layout :vlax-true)
   (vla-put-PlotWithPlotStyles layout :vlax-true)
   (vl-catch-all-apply 'vla-put-PlotWithLineweights (list layout :vlax-true))
@@ -1571,7 +1572,7 @@
   )
 )
 
-(defun inhl:plot-window-to-file (layout layout-name p1 p2 ctb-style pdf-path plotter-name / doc active-layout plot result)
+(defun inhl:plot-window-to-file (layout layout-name p1 p2 ctb-style pdf-path media-name plot-rotation / doc active-layout plot result)
   (if (inhl:file-exists-p pdf-path) (vl-file-delete pdf-path))
   (if (inhl:activate-layout layout-name)
     (progn
@@ -1580,19 +1581,14 @@
       (setq plot (vla-get-Plot doc))
       (if (inhl:set-layout-to-plot plot layout-name)
         (progn
-          (if (and plotter-name (/= plotter-name ""))
-            (progn
-              (vl-catch-all-apply 'vla-put-configname (list active-layout plotter-name))
-              (vl-catch-all-apply 'vla-RefreshPlotDeviceInfo (list active-layout))
-            )
+          (if (and media-name (/= media-name ""))
+            (vl-catch-all-apply 'vla-put-canonicalmedianame (list active-layout media-name))
+          )
+          (if plot-rotation
+            (vl-catch-all-apply 'vla-put-plotrotation (list active-layout plot-rotation))
           )
           (inhl:setup-window-plot active-layout p1 p2 ctb-style)
-          (setq result
-            (if (and plotter-name (/= plotter-name ""))
-              (vl-catch-all-apply 'vla-PlotToFile (list plot pdf-path plotter-name))
-              (vl-catch-all-apply 'vla-PlotToFile (list plot pdf-path))
-            )
-          )
+          (setq result (vl-catch-all-apply 'vla-PlotToFile (list plot pdf-path)))
           (and (not (vl-catch-all-error-p result)) (inhl:wait-file pdf-path 20))
         )
         nil
@@ -2388,7 +2384,6 @@
                     (if (not (= active-paper frame-paper))
                       (progn
                         (vl-catch-all-apply 'vla-put-canonicalmedianame (list plot-layout frame-paper))
-                        (vl-catch-all-apply 'vla-RefreshPlotDeviceInfo (list plot-layout))
                         (setq active-paper frame-paper)
                         (setq active-rotation nil)
                       )
@@ -2413,11 +2408,11 @@
                             ((inhl:enjicad-p)
                               (inhl:plot-window-to-file-enjicad plot-layout layout-name p1 p2 ctb-style temp-pdf))
                             ((inhl:model-layout-p layout-name)
-                              (inhl:plot-window-to-file plot-layout layout-name p1 p2 ctb-style temp-pdf plot-printer-name))
+                              (inhl:plot-window-to-file plot-layout layout-name p1 p2 ctb-style temp-pdf frame-paper plot-rotation))
                             (T
                               (or
                                 (inhl:plot-window-to-file-command layout-name plot-printer-name frame-paper-localized orientation p1 p2 ctb-style temp-pdf)
-                                (inhl:plot-window-to-file plot-layout layout-name p1 p2 ctb-style temp-pdf plot-printer-name)
+                                (inhl:plot-window-to-file plot-layout layout-name p1 p2 ctb-style temp-pdf frame-paper plot-rotation)
                               )
                             )
                           )

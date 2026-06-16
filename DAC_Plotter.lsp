@@ -1531,10 +1531,8 @@
   )
 )
 
-(defun inhl:setup-window-plot (layout p1 p2 ctb-style / u1 u2)
-  (setq u1 (inhl:ucs-point2d p1)
-        u2 (inhl:ucs-point2d p2))
-  (vla-SetWindowToPlot layout (inhl:point2d u1) (inhl:point2d u2))
+(defun inhl:setup-window-plot (layout p1 p2 ctb-style)
+  (vla-SetWindowToPlot layout (inhl:point2d p1) (inhl:point2d p2))
   (vla-put-PlotType layout 4) ; acWindow
   (vla-put-UseStandardScale layout :vlax-true)
   (vla-put-StandardScale layout 0) ; acScaleToFit
@@ -1573,7 +1571,7 @@
   )
 )
 
-(defun inhl:plot-window-to-file (layout layout-name p1 p2 ctb-style pdf-path / doc active-layout plot result)
+(defun inhl:plot-window-to-file (layout layout-name p1 p2 ctb-style pdf-path plotter-name / doc active-layout plot result)
   (if (inhl:file-exists-p pdf-path) (vl-file-delete pdf-path))
   (if (inhl:activate-layout layout-name)
     (progn
@@ -1582,8 +1580,19 @@
       (setq plot (vla-get-Plot doc))
       (if (inhl:set-layout-to-plot plot layout-name)
         (progn
+          (if (and plotter-name (/= plotter-name ""))
+            (progn
+              (vl-catch-all-apply 'vla-put-configname (list active-layout plotter-name))
+              (vl-catch-all-apply 'vla-RefreshPlotDeviceInfo (list active-layout))
+            )
+          )
           (inhl:setup-window-plot active-layout p1 p2 ctb-style)
-          (setq result (vl-catch-all-apply 'vla-PlotToFile (list plot pdf-path)))
+          (setq result
+            (if (and plotter-name (/= plotter-name ""))
+              (vl-catch-all-apply 'vla-PlotToFile (list plot pdf-path plotter-name))
+              (vl-catch-all-apply 'vla-PlotToFile (list plot pdf-path))
+            )
+          )
           (and (not (vl-catch-all-error-p result)) (inhl:wait-file pdf-path 20))
         )
         nil
@@ -1787,7 +1796,7 @@
                 printer-name plot-printer-name paper-size ctb-style
                 sample-ent dxf-sample sample-layer ent-type dxf pt1 pt2
                 dwg-path dwg-base idx frame-list frame ent obj minpt maxpt p1 p2
-                w h center orientation plot-rotation success-count total-count plot-ok plot-abort plot-fail-message initial-papers paper-idx
+                w h center orientation plot-rotation success-count total-count plot-ok initial-papers paper-idx
                 frame-landscape frame-media frame-paper frame-paper-localized frame-paper-landscape combine-pdf temp-dir temp-pdf-files temp-pdf final-pdf merge-ok
                 enjicad-extra-folders enjicad-session-snapshot
                 saved-settings saved-printer saved-paper saved-ctb canonical-paper)
@@ -2318,8 +2327,6 @@
               (setq active-layout-name nil)
               (setq active-paper nil)
               (setq active-rotation nil)
-              (setq plot-abort nil)
-              (setq plot-fail-message nil)
               (setq temp-pdf-files nil)
               (setvar "NOMUTT" 1)
               
@@ -2331,16 +2338,14 @@
                       h  (nth 5 frame)
                       layout-name (nth 6 frame)
                       plot-layout (inhl:get-layout-by-name doc layout-name))
-                (if (not plot-abort)
-                  (inhl:show-progress
-                    (strcat
-                      "DAC Plotter: Đang in "
-                      (itoa idx)
-                      "/"
-                      (itoa total-count)
-                      " - Layout "
-                      layout-name
-                    )
+                (inhl:show-progress
+                  (strcat
+                    "DAC Plotter: Đang in "
+                    (itoa idx)
+                    "/"
+                    (itoa total-count)
+                    " - Layout "
+                    layout-name
                   )
                 )
                 
@@ -2357,7 +2362,7 @@
                         plot-rotation 1) ; ac90degrees
                 )
                 
-                (if (and plot-layout (not plot-abort))
+                (if plot-layout
                   (progn
                     ;; Cau hinh layout object truc tiep; SetLayoutsToPlot se chi dinh tab can in.
                     (if (not (= active-layout-name layout-name))
@@ -2373,6 +2378,7 @@
                                 current-plot-state nil)
                         )
                         (vl-catch-all-apply 'vla-put-configname (list plot-layout plot-printer-name))
+                        (vl-catch-all-apply 'vla-RefreshPlotDeviceInfo (list plot-layout))
                         (setq active-layout-name layout-name)
                         (setq active-paper nil)
                         (setq active-rotation nil)
@@ -2382,6 +2388,7 @@
                     (if (not (= active-paper frame-paper))
                       (progn
                         (vl-catch-all-apply 'vla-put-canonicalmedianame (list plot-layout frame-paper))
+                        (vl-catch-all-apply 'vla-RefreshPlotDeviceInfo (list plot-layout))
                         (setq active-paper frame-paper)
                         (setq active-rotation nil)
                       )
@@ -2406,18 +2413,11 @@
                             ((inhl:enjicad-p)
                               (inhl:plot-window-to-file-enjicad plot-layout layout-name p1 p2 ctb-style temp-pdf))
                             ((inhl:model-layout-p layout-name)
-                              (or
-                                (inhl:plot-window-to-file-command layout-name plot-printer-name frame-paper-localized orientation p1 p2 ctb-style temp-pdf)
-                                (if (/= plot-printer-name printer-name)
-                                  (inhl:plot-window-to-file-command layout-name printer-name frame-paper-localized orientation p1 p2 ctb-style temp-pdf)
-                                  nil
-                                )
-                              )
-                            )
+                              (inhl:plot-window-to-file plot-layout layout-name p1 p2 ctb-style temp-pdf plot-printer-name))
                             (T
                               (or
                                 (inhl:plot-window-to-file-command layout-name plot-printer-name frame-paper-localized orientation p1 p2 ctb-style temp-pdf)
-                                (inhl:plot-window-to-file plot-layout layout-name p1 p2 ctb-style temp-pdf)
+                                (inhl:plot-window-to-file plot-layout layout-name p1 p2 ctb-style temp-pdf plot-printer-name)
                               )
                             )
                           )
@@ -2427,12 +2427,7 @@
                             (setq temp-pdf-files (append temp-pdf-files (list temp-pdf)))
                             (setq success-count (1+ success-count))
                           )
-                          (if (and (= success-count 0) (inhl:model-layout-p layout-name))
-                            (progn
-                              (setq plot-abort T)
-                              (setq plot-fail-message "Không tạo được PDF tạm cho khung đầu tiên trong Model. Lệnh -PLOT có thể đang lệch prompt hoặc máy in/khổ giấy không nhận đường dẫn file.")
-                            )
-                          )
+                          nil
                         )
                       )
                       (if (inhl:plot-window-to-device plot-layout layout-name p1 p2 ctb-style)
@@ -2477,12 +2472,7 @@
               (if (= success-count 0)
                 (progn
                   (inhl:clear-progress)
-                  (alert
-                    (if plot-fail-message
-                      plot-fail-message
-                      "Không in được khung nào. Hãy kiểm tra máy in/khổ giấy đã chọn."
-                    )
-                  )
+                  (alert "Không in được khung nào. Hãy kiểm tra máy in/khổ giấy đã chọn.")
                 )
                 (if combine-pdf
                   (progn

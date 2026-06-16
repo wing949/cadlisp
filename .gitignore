@@ -5,6 +5,7 @@ AGENTS.md
 # Exclude test files and directories
 test/
 _DAC_Plotter_Temp/
+refer/
 
 # Exclude archives and documents
 *.zip

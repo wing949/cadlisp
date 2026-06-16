@@ -1531,13 +1531,26 @@
   )
 )
 
-(defun inhl:setup-window-plot (layout p1 p2 ctb-style)
+(defun inhl:setup-window-plot (layout p1 p2 ctb-style / ll ur margins-array margins-list)
   (vla-SetWindowToPlot layout (inhl:point2d p1) (inhl:point2d p2))
   (vla-put-PlotType layout 4) ; acWindow
   (vla-put-UseStandardScale layout :vlax-true)
   (vla-put-StandardScale layout 0) ; acScaleToFit
-  (vl-catch-all-apply 'vla-put-PlotOrigin (list layout (inhl:point2d '(0.0 0.0))))
-  (vla-put-CenterPlot layout :vlax-true)
+  
+  ;; Query the paper's unprintable margins
+  (setq margins-list '(0.0 0.0))
+  (if (not (vl-catch-all-error-p (vl-catch-all-apply 'vla-GetPaperMargins (list layout 'll 'ur))))
+    (setq margins-list (vlax-safearray->list ll))
+  )
+  
+  ;; Disable CenterPlot so PlotOrigin can shift the plot to the page edges
+  (vla-put-CenterPlot layout :vlax-false)
+  
+  ;; Offset the plot origin by negative margins
+  (setq margins-array (vlax-make-safearray vlax-vbDouble '(0 . 1)))
+  (vlax-safearray-fill margins-array (list (- (car margins-list)) (- (cadr margins-list))))
+  (vl-catch-all-apply 'vla-put-PlotOrigin (list layout margins-array))
+  
   (vla-put-PlotWithPlotStyles layout :vlax-true)
   (vl-catch-all-apply 'vla-put-PlotWithLineweights (list layout :vlax-true))
   (vl-catch-all-apply 'vla-put-ScaleLineweights (list layout :vlax-false))

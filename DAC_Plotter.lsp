@@ -1210,21 +1210,21 @@
   )
 )
 
-(defun inhl:get-block-names ( / ss idx ent obj result)
+(defun inhl:get-block-names ( / tbl name result)
   (setq result nil)
-  (setq ss (ssget "X" '((0 . "INSERT"))))
-  (if ss
-    (progn
-      (setq idx 0)
-      (while (< idx (sslength ss))
-        (setq ent (ssname ss idx))
-        (setq obj (vlax-ename->vla-object ent))
-        (setq result (inhl:add-unique-ci (inhl:block-effective-name obj) result))
-        (setq idx (1+ idx))
-      )
+  (setq tbl (tblnext "BLOCK" t))
+  (while tbl
+    (setq name (cdr (assoc 2 tbl)))
+    ;; Loại bỏ các block ẩn, layout hoặc anonymous bắt đầu bằng dấu *
+    (if (not (wcmatch name "`**"))
+      (setq result (cons name result))
     )
+    (setq tbl (tblnext "BLOCK"))
   )
-  (vl-sort result '<)
+  (if result
+    (vl-sort result '<)
+    (list "<Không có block>")
+  )
 )
 
 (defun inhl:ssget-title-blocks (block-name / ss result idx ent obj name)

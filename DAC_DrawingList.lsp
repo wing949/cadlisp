@@ -402,17 +402,20 @@
   result
 )
 
-(defun ddl:get-block-height (ent / obj minpt maxpt result p1 p2)
-  (setq obj (vlax-ename->vla-object ent))
-  (setq result (vl-catch-all-apply 'vla-getboundingbox (list obj 'minpt 'maxpt)))
-  (if (not (vl-catch-all-error-p result))
-    (progn
-      (setq p1 (vlax-safearray->list minpt)
-            p2 (vlax-safearray->list maxpt))
-      (abs (- (cadr p2) (cadr p1)))
-    )
-    0.0
+(defun ddl:get-block-height (ent / height)
+  (setq height 0.0)
+  (vl-catch-all-apply
+    '(lambda ( / obj minpt maxpt p1 p2)
+       (setq obj (vlax-ename->vla-object ent))
+       (vla-getboundingbox obj 'minpt 'maxpt)
+       (if (and minpt maxpt)
+         (setq p1 (vlax-safearray->list minpt)
+               p2 (vlax-safearray->list maxpt)
+               height (abs (- (cadr p2) (cadr p1))))
+       )
+     )
   )
+  height
 )
 
 (defun ddl:sort-title-blocks (ents / decorated result item ent pt heights valid-heights avg-h row-tolerance sorted-by-y rows current-row sorted-list row)
@@ -426,7 +429,7 @@
                     (/ (apply '+ valid-heights) (float (length valid-heights)))
                     100.0
                   )
-            row-tolerance (* avg-h 0.5)
+            row-tolerance (max (* avg-h 0.5) 10.0)
             decorated nil)
       
       ;; Decorate: list of (list pt ent)
@@ -1949,6 +1952,19 @@
     ((or (wcmatch h-upper "*TÊN*BẢN*VẼ*") (wcmatch h-upper "*TEN*BAN*VE*") (wcmatch h-upper "*SHEET*NAME*") (wcmatch h-upper "*DRAWING*NAME*"))
       "TÊN BẢN VẼ")
     (T header)
+  )
+)
+
+(defun ddl:excel-style-range (sheet start-row start-col end-row end-col / cell1 cell2 range)
+  (setq cell1 (ddl:excel-cell sheet start-row start-col)
+        cell2 (ddl:excel-cell sheet end-row end-col))
+  (if (and cell1 cell2 (not (vl-catch-all-error-p cell1)) (not (vl-catch-all-error-p cell2)))
+    (progn
+      (setq range (vl-catch-all-apply 'vlax-get-property (list sheet 'Range cell1 cell2)))
+      (if (and range (not (vl-catch-all-error-p range)))
+        range
+      )
+    )
   )
 )
 

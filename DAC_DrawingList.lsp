@@ -958,7 +958,8 @@
     (setq values (ddl:values-for-row row headers))
     (setq lines (append lines (list (ddl:csv-line values))))
   )
-  (setq text "")
+  ;; Them chi thi sep=, o dong dau tien de Excel nhan dien dung dau phay va ma hoa UTF-8 tieng Viet
+  (setq text "sep=,\r\n")
   (foreach line lines
     (setq text (strcat text line "\r\n"))
   )
@@ -1513,11 +1514,11 @@
                   (if (not (vl-catch-all-error-p columns))
                     (vl-catch-all-apply 'vlax-invoke-method (list columns 'AutoFit))
                   )
-                  ;; Try standard SaveAs without file format code first
-                  (setq result (vl-catch-all-apply 'vlax-invoke-method (list book 'SaveAs native-path)))
+                  ;; Ghi truc tiep dinh dang Excel 2007+ (.xlsx) bang ma dinh dang 51
+                  (setq result (vl-catch-all-apply 'vlax-invoke (list book 'SaveAs native-path 51)))
                   (if (vl-catch-all-error-p result)
-                    ;; Fallback to format code 51 (xlOpenXMLWorkbook)
-                    (setq result (vl-catch-all-apply 'vlax-invoke (list book 'SaveAs native-path 51)))
+                    ;; Fallback to standard SaveAs if 51 fails
+                    (setq result (vl-catch-all-apply 'vlax-invoke-method (list book 'SaveAs native-path)))
                   )
                   (if (vl-catch-all-error-p result)
                     (alert (strcat "Lỗi khi lưu file Excel:\nĐường dẫn: " native-path "\n\nChi tiết lỗi: " (vl-catch-all-error-message result)))

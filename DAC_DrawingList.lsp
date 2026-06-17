@@ -206,39 +206,46 @@
   best-ent
 )
 
-(defun ddl:interactive-mtext-fields (ins-ent / ins-dxf ins-pt ins-rot ins-sx ins-sy done idx fields picked-ent text-val col-name text-pt opt-vec)
+(defun ddl:interactive-mtext-fields (ins-ent / ins-dxf ins-pt ins-rot ins-sx ins-sy fields picked-ent opt-vec text-pt prompts keys idx)
   (setq ins-dxf (entget ins-ent)
         ins-pt (cdr (assoc 10 ins-dxf))
         ins-rot (cdr (assoc 50 ins-dxf))
         ins-sx (cdr (assoc 41 ins-dxf))
-        ins-sy (cdr (assoc 42 ins-dxf))
-        idx 1
-        done nil)
+        ins-sy (cdr (assoc 42 ins-dxf)))
   (if (null ins-rot) (setq ins-rot 0.0))
   (if (null ins-sx) (setq ins-sx 1.0))
   (if (null ins-sy) (setq ins-sy 1.0))
-  (princ "\n--- DINH NGHIA CAC COT CAN TRICH XUAT BANG CACH CHON TEXT/MTEXT ---")
-  (princ "\nNhap chon cac doi tuong Text/MText tren khung ten mau theo thu tu cot.")
-  (while (not done)
-    (setq picked-ent (car (entsel (strcat "\nChon Text/MText cho cot thu " (itoa idx) " (hoac Enter de hoan thanh): "))))
+  
+  (setq prompts (list
+                  "\nChọn Text/MText làm Số hiệu bản vẽ (hoặc Enter/Space để bỏ qua): "
+                  "\nChọn Text/MText làm Tên bản vẽ Tiếng Việt (hoặc Enter/Space để bỏ qua): "
+                  "\nChọn Text/MText làm Tên bản vẽ Ngôn ngữ thứ 2 (hoặc Enter/Space để bỏ qua): "
+                )
+        keys (list
+               "SỐ HIỆU BẢN VẼ"
+               "TÊN BẢN VẼ"
+               "TÊN BẢN VẼ (NGÔN NGỮ 2)"
+             ))
+  
+  (princ "\n--- ĐỊNH NGHĨA CÁC CỘT CẦN TRÍCH XUẤT ---")
+  (setq idx 0)
+  (while (< idx (length prompts))
+    (setq picked-ent (car (entsel (nth idx prompts))))
     (if picked-ent
       (if (member (cdr (assoc 0 (entget picked-ent))) '("TEXT" "MTEXT"))
         (progn
-          (setq text-val (ddl:text-value picked-ent))
-          (princ (strcat "\n-> Da chon Text voi noi dung hien tai: \"" text-val "\""))
-          (setq col-name (getstring T "\nNhap ten cot cho du lieu nay (vi du: STT, TEN BAN VE): "))
-          (if (= col-name "")
-            (setq col-name (strcat "COT_" (itoa idx)))
-          )
           (setq text-pt (cdr (assoc 10 (entget picked-ent)))
                 opt-vec (ddl:wcs->local text-pt ins-pt ins-rot ins-sx ins-sy)
-                fields (append fields (list (list col-name opt-vec)))
-                idx (1+ idx))
+                fields (append fields (list (list (nth idx keys) opt-vec))))
+          (princ (strcat "\n-> Đã ghi nhận cột: " (nth idx keys)))
         )
-        (princ "\n-> Doi tuong duoc chon khong phai la TEXT hoac MTEXT. Hay chon lai.")
+        (progn
+          (princ "\n-> Đối tượng được chọn không phải là TEXT hoặc MTEXT. Hãy chọn lại.")
+          (setq idx (1- idx))
+        )
       )
-      (setq done T)
     )
+    (setq idx (1+ idx))
   )
   fields
 )

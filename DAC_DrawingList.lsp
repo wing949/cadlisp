@@ -2279,9 +2279,8 @@
                         (progn
                           ;; Set ColumnWidth to 0.0 to hide it visually
                           (vl-catch-all-apply 'vlax-put-property (list col-item 'ColumnWidth 0.0))
-                          ;; Set Hidden to True via both methods
+                          ;; Set Hidden to True
                           (vl-catch-all-apply 'vlax-put-property (list col-item 'Hidden :vlax-true))
-                          (vl-catch-all-apply 'vla-put-hidden (list col-item :vlax-true))
                         )
                       )
                     )

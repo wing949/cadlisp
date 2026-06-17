@@ -1968,7 +1968,7 @@
   )
 )
 
-(defun ddl:export-xlsx (rows path / excel books book sheets sheet visible-headers headers r c row header values value columns result native-path total-cols range borders font interior rows-coll cols-coll row-item col-item ext fmt-code title-text total-rows cell1 cell2 title2-idx)
+(defun ddl:export-xlsx (rows path / excel books book sheets sheet visible-headers headers r c row header values value columns result native-path total-cols range borders font interior rows-coll cols-coll row-item col-item ext fmt-code title-text total-rows cell1 cell2 title2-idx cell entcol inside-horiz)
   (setq native-path (vl-string-translate "/" "\\" path))
   (setq excel (vl-catch-all-apply 'vlax-create-object (list "Excel.Application")))
   (if (vl-catch-all-error-p excel)
@@ -2195,8 +2195,29 @@
                     )
                   )
                   
-                  ;; 6. Draw Borders for the visible table (Row 1 to total-rows, Col 2 to total-cols)
-                  (setq range (ddl:excel-style-range sheet 1 2 total-rows total-cols))
+                  ;; 6a. Outer borders for Title & Subtitle range (Row 1 to Row 2, Col 2 to total-cols)
+                  ;; with inside horizontal border set to xlNone to remove dividing line.
+                  (setq range (ddl:excel-style-range sheet 1 2 2 total-cols))
+                  (if range
+                    (progn
+                      (setq borders (vl-catch-all-apply 'vlax-get-property (list range 'Borders)))
+                      (if (and borders (not (vl-catch-all-error-p borders)))
+                        (progn
+                          ;; Set all borders to xlContinuous / xlThin
+                          (vl-catch-all-apply 'vlax-put-property (list borders 'LineStyle 1))
+                          (vl-catch-all-apply 'vlax-put-property (list borders 'Weight 2))
+                          ;; Explicitly remove inside horizontal borders (between Row 1 and Row 2)
+                          (setq inside-horiz (vl-catch-all-apply 'vlax-get-property (list borders 'Item 12))) ; xlInsideHorizontal = 12
+                          (if (and inside-horiz (not (vl-catch-all-error-p inside-horiz)))
+                            (vl-catch-all-apply 'vlax-put-property (list inside-horiz 'LineStyle -4142)) ; xlNone = -4142
+                          )
+                        )
+                      )
+                    )
+                  )
+                  
+                  ;; 6b. Borders for Headers and Data (Row 3 to total-rows, Col 2 to total-cols)
+                  (setq range (ddl:excel-style-range sheet 3 2 total-rows total-cols))
                   (if range
                     (progn
                       (setq borders (vl-catch-all-apply 'vlax-get-property (list range 'Borders)))
@@ -2209,9 +2230,9 @@
                     )
                   )
                   
-                  ;; 7. AutoFit Column Widths (Col 2 onwards)
-                  (setq cell1 (ddl:excel-cell sheet 1 2)
-                        cell2 (ddl:excel-cell sheet 1 total-cols))
+                  ;; 7. AutoFit Column Widths (Col 2 onwards, using Row 4+ data cells to avoid merged headers/titles)
+                  (setq cell1 (ddl:excel-cell sheet 4 2)
+                        cell2 (ddl:excel-cell sheet total-rows total-cols))
                   (if (and cell1 cell2 (not (vl-catch-all-error-p cell1)) (not (vl-catch-all-error-p cell2)))
                     (progn
                       (setq range (vl-catch-all-apply 'vlax-get-property (list sheet 'Range cell1 cell2)))
@@ -2226,13 +2247,13 @@
                     )
                   )
                   
-                  ;; 8. Hide Column 1 (HANDLE)
-                  (setq cols-coll (vl-catch-all-apply 'vlax-get-property (list sheet 'Columns)))
-                  (if (and cols-coll (not (vl-catch-all-error-p cols-coll)))
+                  ;; 8. Hide Column 1 (HANDLE) completely
+                  (setq cell (ddl:excel-cell sheet 1 1))
+                  (if (and cell (not (vl-catch-all-error-p cell)))
                     (progn
-                      (setq col-item (vl-catch-all-apply 'vlax-get-property (list cols-coll 'Item 1)))
-                      (if (and col-item (not (vl-catch-all-error-p col-item)))
-                        (vl-catch-all-apply 'vlax-put-property (list col-item 'Hidden :vlax-true))
+                      (setq entcol (vl-catch-all-apply 'vlax-get-property (list cell 'EntireColumn)))
+                      (if (and entcol (not (vl-catch-all-error-p entcol)))
+                        (vl-catch-all-apply 'vlax-put-property (list entcol 'Hidden :vlax-true))
                       )
                     )
                   )

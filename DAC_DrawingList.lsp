@@ -21,6 +21,7 @@
 (setq *ddl-config-attrs* nil)
 (setq *ddl-config-selected* nil)
 (setq *ddl-text-style-names* nil)
+(setq *ddl-data-block-name* nil)
 
 (defun ddl:step (text)
   (setq *ddl-debug-step* text)
@@ -93,10 +94,24 @@
   (if (and layout (/= layout "")) layout "Model")
 )
 
-(defun ddl:block-name (ent / dxf result)
-  (setq dxf (entget ent)
-        result (cdr (assoc 2 dxf)))
-  (if result result "")
+(defun ddl:block-name (ent / dxf obj name)
+  (setq dxf (entget ent))
+  (if (and dxf (= (cdr (assoc 0 dxf)) "INSERT"))
+    (progn
+      (setq name (vl-catch-all-apply
+                   '(lambda ()
+                      (setq obj (vlax-ename->vla-object ent))
+                      (if (vlax-property-available-p obj 'EffectiveName)
+                        (vlax-get-property obj 'EffectiveName)
+                        (cdr (assoc 2 dxf))
+                      ))))
+      (if (or (null name) (vl-catch-all-error-p name))
+        (cdr (assoc 2 dxf))
+        name
+      )
+    )
+    ""
+  )
 )
 
 (defun ddl:get-attributes (ent / dxf next next-dxf tag value result)
@@ -139,15 +154,28 @@
   row
 )
 
-(defun ddl:row-from-block (ent index mtext-values / dxf attrs row pair)
+(defun ddl:row-from-block (ent index mtext-values / dxf attrs row pair layout space pt data-ent)
   (if *ddl-interactive-fields*
     (ddl:row-from-interactive-fields ent index *ddl-interactive-fields*)
     (progn
       (setq dxf (entget ent)
-            attrs (ddl:get-attributes ent))
+            layout (ddl:entity-layout-name dxf)
+            space (cdr (assoc 67 dxf)))
+      (if (null space) (setq space 0))
+      (if (and *ddl-data-block-name* (/= *ddl-data-block-name* ""))
+        (progn
+          (setq pt (ddl:insert-point ent)
+                data-ent (ddl:find-closest-block pt *ddl-data-block-name* layout space))
+          (if data-ent
+            (setq attrs (ddl:get-attributes data-ent))
+            (setq attrs nil)
+          )
+        )
+        (setq attrs (ddl:get-attributes ent))
+      )
       (setq row (list
         (cons "STT" (itoa index))
-        (cons "LAYOUT" (ddl:entity-layout-name dxf))
+        (cons "LAYOUT" layout)
         (cons "BLOCK" (ddl:block-name ent))
         (cons "HANDLE" (cdr (assoc 5 dxf)))
         (cons "_ATTRS" attrs)
@@ -198,6 +226,61 @@
         (if (< dist min-dist)
           (setq min-dist dist
                 best-ent ent)
+        )
+        (setq idx (1+ idx))
+      )
+    )
+  )
+  best-ent
+)
+
+(defun ddl:find-closest-block (pt block-name layout space / ss idx ent best-ent min-dist dxf test-pt dist)
+  (setq ss (ssget "_X" (list '(0 . "INSERT") (cons 410 layout) (cons 67 space))))
+  (if ss
+    (progn
+      (setq idx 0
+            min-dist 1e20
+            best-ent nil)
+      (while (< idx (sslength ss))
+        (setq ent (ssname ss idx))
+        (if (ddl:same-block-p ent block-name)
+          (progn
+            (setq dxf (entget ent)
+                  test-pt (cdr (assoc 10 dxf))
+                  dist (distance (list (car pt) (cadr pt)) (list (car test-pt) (cadr test-pt))))
+            (if (< dist min-dist)
+              (setq min-dist dist
+                    best-ent ent)
+            )
+          )
+        )
+        (setq idx (1+ idx))
+      )
+    )
+  )
+  best-ent
+)
+
+(defun ddl:find-closest-attribute-block (pt layout space / ss idx ent best-ent min-dist dxf test-pt dist attrs)
+  (setq ss (ssget "_X" (list '(0 . "INSERT") (cons 410 layout) (cons 67 space))))
+  (if ss
+    (progn
+      (setq idx 0
+            min-dist 1e20
+            best-ent nil)
+      (while (< idx (sslength ss))
+        (setq ent (ssname ss idx)
+              dxf (entget ent))
+        (if (and (= (cdr (assoc 66 dxf)) 1)
+                 (setq attrs (ddl:get-attributes ent)))
+          (progn
+            (setq test-pt (cdr (assoc 10 dxf))
+                  dist (distance (list (car pt) (cadr pt)) (list (car test-pt) (cadr test-pt))))
+            (if (< dist min-dist)
+              (setq min-dist dist
+                    best-ent ent)
+            )
+          )
         )
         (setq idx (1+ idx))
       )
@@ -884,7 +967,7 @@
   ent
 )
 
-(defun ddl:pick-title-blocks ( / first block-name attrs config selected ents ent rows idx fields style)
+(defun ddl:pick-title-blocks ( / first block-name attrs config selected ents ent rows idx fields style data-block-ent data-attrs)
   (ddl:step "pick-title-blocks")
   (setq first (ddl:pick-first-title-block))
   (if first
@@ -893,18 +976,40 @@
             attrs (ddl:get-attributes first))
       
       (if (null attrs)
-        ;; Truong hop block khong co attribute (vi du XRef) -> Chon MText thu cong luon
-        (setq fields (ddl:interactive-mtext-fields first))
+        ;; Truong hop block khong co attribute (vi du XRef)
+        (progn
+          (setq data-block-ent (car (entsel "\nChọn block chứa Attribute dữ liệu (hoặc Enter/Space để chọn MText thủ công): ")))
+          (if (and data-block-ent (ddl:valid-title-block-p data-block-ent) (setq data-attrs (ddl:get-attributes data-block-ent)))
+            (progn
+              (setq *ddl-data-block-name* (ddl:block-name data-block-ent))
+              (princ (strcat "\n-> Đã nhận diện block dữ liệu: " *ddl-data-block-name*))
+              (setq config (ddl:configure-extraction data-attrs block-name)
+                    selected (car config)
+                    style (cadr config))
+              (if selected
+                (progn
+                  (setq *ddl-interactive-fields* nil)
+                  (setq *ddl-selected-headers* (append '("STT" "LAYOUT" "BLOCK") selected '("HANDLE")))
+                )
+              )
+            )
+            (progn
+              (princ "\n-> Chuyển sang chế độ chọn MText thủ công.")
+              (setq *ddl-data-block-name* nil)
+              (setq fields (ddl:interactive-mtext-fields first))
+            )
+          )
+        )
         ;; Truong hop block co attribute -> Hien popup luon
         (progn
+          (setq *ddl-data-block-name* nil)
           (setq config (ddl:configure-extraction attrs block-name)
                 selected (car config)
                 style (cadr config))
           (if selected
             (progn
               (setq *ddl-interactive-fields* nil)
-              (setq *ddl-selected-headers* (append '("STT" "LAYOUT" "BLOCK") selected))
-              (setq *ddl-selected-headers* (append *ddl-selected-headers* '("HANDLE")))
+              (setq *ddl-selected-headers* (append '("STT" "LAYOUT" "BLOCK") selected '("HANDLE")))
             )
           )
         )
@@ -988,22 +1093,48 @@
   result
 )
 
-(defun ddl:drawing-number-header (headers / result header h-upper)
+(defun ddl:is-drawing-number-header-p (header / h-upper)
+  (setq h-upper (strcase header))
+  (and
+    (not (vl-string-search "TÊN" h-upper))
+    (not (vl-string-search "TEN" h-upper))
+    (not (vl-string-search "TITLE" h-upper))
+    (not (vl-string-search "NAME" h-upper))
+    (or
+      (= h-upper "SỐ HIỆU BẢN VẼ")
+      (= h-upper "SO HIEU BAN VE")
+      (= h-upper "SỐ HIỆU")
+      (= h-upper "SO HIEU")
+      (= h-upper "SOBV")
+      (= h-upper "SH")
+      (= h-upper "NO")
+      (= h-upper "NO.")
+      (vl-string-search "NUMBER" h-upper)
+      (vl-string-search "NUM" h-upper)
+      (vl-string-search "DWG" h-upper)
+      (vl-string-search "DRAWING" h-upper)
+      (vl-string-search "SHEET" h-upper)
+      (and (vl-string-search "SỐ" h-upper) (vl-string-search "HIỆU" h-upper))
+      (and (vl-string-search "SO" h-upper) (vl-string-search "HIEU" h-upper))
+      (and (vl-string-search "KÝ" h-upper) (vl-string-search "HIỆU" h-upper))
+      (and (vl-string-search "KY" h-upper) (vl-string-search "HIEU" h-upper))
+      (wcmatch h-upper "*DRAWING*NO*")
+      (wcmatch h-upper "*DWG*NO*")
+      (wcmatch h-upper "*SHEET*NO*")
+      (wcmatch h-upper "*SO*HIEU*")
+      (wcmatch h-upper "*SỐ*HIỆU*")
+      (wcmatch h-upper "*SO*BAN*VE*")
+      (wcmatch h-upper "*SỐ*BẢN*VẼ*")
+      (wcmatch h-upper "*NUMBER*")
+      (wcmatch h-upper "*KÝ*HIỆU*")
+      (wcmatch h-upper "*KY*HIEU*")
+    )
+  )
+)
+
+(defun ddl:drawing-number-header (headers / result header)
   (foreach header headers
-    (setq h-upper (strcase header))
-    (if (and (null result)
-             (or
-               (wcmatch h-upper "*DRAWING*NO*")
-               (wcmatch h-upper "*DWG*NO*")
-               (wcmatch h-upper "*SHEET*NO*")
-               (wcmatch h-upper "*SO*HIEU*")
-               (wcmatch h-upper "*SỐ*HIỆU*")
-               (wcmatch h-upper "*SO*BAN*VE*")
-               (wcmatch h-upper "*SỐ*BẢN*VẼ*")
-               (wcmatch h-upper "*NUMBER*")
-               (wcmatch h-upper "*KÝ*HIỆU*")
-               (wcmatch h-upper "*KY*HIEU*")
-             ))
+    (if (and (null result) (ddl:is-drawing-number-header-p header))
       (setq result header)
     )
   )
@@ -1162,18 +1293,38 @@
   )
 )
 
-(defun ddl:apply-record-to-block (record / handle ent header pair aliases count)
+(defun ddl:apply-record-to-block (record / handle ent header pair aliases count layout space pt data-ent target-ent)
   (setq handle (cdr (assoc "HANDLE" record))
         ent (if handle (handent handle) nil)
         count 0)
   (if ent
     (progn
+      (setq target-ent ent)
+      ;; If the target entity does not have attributes, find the closest block that does
+      (if (null (ddl:get-attributes target-ent))
+        (progn
+          (setq layout (ddl:entity-layout-name (entget ent))
+                space (cdr (assoc 67 (entget ent))))
+          (if (null space) (setq space 0))
+          (setq pt (ddl:insert-point ent))
+          (setq data-ent nil)
+          ;; Try to find closest block with *ddl-data-block-name* first
+          (if (and *ddl-data-block-name* (/= *ddl-data-block-name* ""))
+            (setq data-ent (ddl:find-closest-block pt *ddl-data-block-name* layout space))
+          )
+          ;; Fallback to closest block with attributes
+          (if (null data-ent)
+            (setq data-ent (ddl:find-closest-attribute-block pt layout space))
+          )
+          (if data-ent (setq target-ent data-ent))
+        )
+      )
       (foreach pair record
         (setq header (car pair))
         (if (ddl:importable-header-p header)
           (progn
             (setq aliases (ddl:aliases-for-header header))
-            (if (and aliases (ddl:set-attr-value ent aliases (cdr pair)))
+            (if (and aliases (ddl:set-attr-value target-ent aliases (cdr pair)))
               (setq count (1+ count))
             )
           )
@@ -1351,7 +1502,13 @@
   
   ;; 4. Fill Header (Row 1)
   (setq tag-list (append (list (if number-header number-header "")) title-headers))
-  (vl-catch-all-apply 'vlax-invoke-method (list table 'SetText 1 0 (strcat (ddl:get-header-text "STT") "{\\H0.0001;HEADERS:" (ddl:join-strings tag-list ",") "}")))
+  (vl-catch-all-apply 'vlax-invoke-method (list table 'SetText 1 0
+    (strcat (ddl:get-header-text "STT") "{\\H0.0001;HEADERS:" (ddl:join-strings tag-list ",")
+            (if (and *ddl-data-block-name* (/= *ddl-data-block-name* ""))
+              (strcat ";DATABLOCK:" *ddl-data-block-name*)
+              ""
+            )
+            "}")))
   (vl-catch-all-apply 'vlax-invoke-method (list table 'SetCellTextStyle 1 0 font))
   (vl-catch-all-apply 'vlax-invoke-method (list table 'SetCellTextHeight 1 0 text-height))
   (vl-catch-all-apply 'vlax-invoke-method (list table 'SetCellAlignment 1 0 5))
@@ -1486,14 +1643,27 @@
   )
 )
 
-(defun ddl:parse-cell-headers (text / pos res)
+(defun ddl:parse-cell-headers (text / pos res semipos header-str block-str bpos)
   (if (and text (setq pos (vl-string-search "{\\H0.0001;HEADERS:" text)))
     (progn
       (setq res (substr text (+ pos 19)))
       (if (= (substr res (strlen res) 1) "}")
         (setq res (substr res 1 (1- (strlen res))))
       )
-      (ddl:split-string res ",")
+      (if (setq semipos (vl-string-search ";" res))
+        (progn
+          (setq header-str (substr res 1 semipos)
+                block-str (substr res (+ semipos 2)))
+          (if (setq bpos (vl-string-search "DATABLOCK:" block-str))
+            (setq *ddl-data-block-name* (substr block-str (+ bpos 11)))
+          )
+          (ddl:split-string header-str ",")
+        )
+        (progn
+          (setq *ddl-data-block-name* nil)
+          (ddl:split-string res ",")
+        )
+      )
     )
     nil
   )

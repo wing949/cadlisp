@@ -82,7 +82,7 @@
     (setq pos (vl-string-search ";" text))
     (if pos
       (setq item (substr text 1 pos)
-            text (substr text (+ pos 2)))
+            text (substr text (+ pos 2) (strlen text)))
       (setq item text
             text nil)
     )

@@ -1396,17 +1396,20 @@
 )
 
 (defun ddl:excel-cell (sheet row col / cell cells)
-  (setq cell (vl-catch-all-apply 'vlax-get-property (list sheet 'Cells row col)))
-  (if (vl-catch-all-error-p cell)
+  (setq cells (vl-catch-all-apply 'vlax-get-property (list sheet 'Cells)))
+  (if (vl-catch-all-error-p cells)
+    (setq cell (vl-catch-all-apply 'vlax-get-property (list sheet 'Cells row col)))
     (progn
-      (setq cells (vl-catch-all-apply 'vlax-get-property (list sheet 'Cells)))
-      (if (vl-catch-all-error-p cells)
-        cells
-        (vl-catch-all-apply 'vlax-get-property (list cells 'Item row col))
+      (setq cell (vl-catch-all-apply 'vlax-invoke (list cells 'Item row col)))
+      (if (vl-catch-all-error-p cell)
+        (setq cell (vl-catch-all-apply 'vlax-get-property (list cells 'Item row col)))
+      )
+      (if (vl-catch-all-error-p cell)
+        (setq cell (vl-catch-all-apply 'vlax-get-property (list sheet 'Cells row col)))
       )
     )
-    cell
   )
+  cell
 )
 
 (defun ddl:excel-cell-value (sheet row col / cell value)
@@ -1431,7 +1434,14 @@
       nil
     )
     (progn
-      (setq result (vl-catch-all-apply 'vlax-put-property (list cell 'Value2 value)))
+      ;; Try vlax-put which is much more tolerant and handles types automatically
+      (setq result (vl-catch-all-apply 'vlax-put (list cell 'Value value)))
+      (if (vl-catch-all-error-p result)
+        (setq result (vl-catch-all-apply 'vlax-put (list cell 'Value2 value)))
+      )
+      (if (vl-catch-all-error-p result)
+        (setq result (vl-catch-all-apply 'vlax-put-property (list cell 'Value2 value)))
+      )
       (if (vl-catch-all-error-p result)
         (setq result (vl-catch-all-apply 'vlax-put-property (list cell 'Value value)))
       )
@@ -1446,7 +1456,8 @@
   )
 )
 
-(defun ddl:export-xlsx (rows path / excel books book sheets sheet headers r c row header values value columns result)
+(defun ddl:export-xlsx (rows path / excel books book sheets sheet headers r c row header values value columns result native-path)
+  (setq native-path (vl-string-translate "/" "\\" path))
   (setq excel (vl-catch-all-apply 'vlax-create-object (list "Excel.Application")))
   (if (vl-catch-all-error-p excel)
     (progn
@@ -1502,9 +1513,14 @@
                   (if (not (vl-catch-all-error-p columns))
                     (vl-catch-all-apply 'vlax-invoke-method (list columns 'AutoFit))
                   )
-                  (setq result (vl-catch-all-apply 'vlax-invoke (list book 'SaveAs path 51)))
+                  ;; Try standard SaveAs without file format code first
+                  (setq result (vl-catch-all-apply 'vlax-invoke-method (list book 'SaveAs native-path)))
                   (if (vl-catch-all-error-p result)
-                    (alert (strcat "Lỗi khi lưu file Excel:\nĐường dẫn: " path "\n\nChi tiết lỗi: " (vl-catch-all-error-message result)))
+                    ;; Fallback to format code 51 (xlOpenXMLWorkbook)
+                    (setq result (vl-catch-all-apply 'vlax-invoke (list book 'SaveAs native-path 51)))
+                  )
+                  (if (vl-catch-all-error-p result)
+                    (alert (strcat "Lỗi khi lưu file Excel:\nĐường dẫn: " native-path "\n\nChi tiết lỗi: " (vl-catch-all-error-message result)))
                   )
                   (ddl:excel-cleanup excel book)
                   (not (vl-catch-all-error-p result))
@@ -1518,7 +1534,8 @@
   )
 )
 
-(defun ddl:read-xlsx-records (path / excel books book sheets sheet row col headers data values value done)
+(defun ddl:read-xlsx-records (path / excel books book sheets sheet row col headers data values value done native-path)
+  (setq native-path (vl-string-translate "/" "\\" path))
   (setq excel (vl-catch-all-apply 'vlax-create-object (list "Excel.Application")))
   (if (vl-catch-all-error-p excel)
     nil
@@ -1527,7 +1544,7 @@
       (if (vl-catch-all-error-p books)
         (progn (ddl:excel-cleanup excel nil) nil)
         (progn
-          (setq book (vl-catch-all-apply 'vlax-invoke-method (list books 'Open path)))
+          (setq book (vl-catch-all-apply 'vlax-invoke-method (list books 'Open native-path)))
           (if (vl-catch-all-error-p book)
             (progn (ddl:excel-cleanup excel nil) nil)
             (progn

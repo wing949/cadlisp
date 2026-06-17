@@ -877,7 +877,7 @@
   ent
 )
 
-(defun ddl:pick-title-blocks ( / first block-name attrs config selected ents ent rows idx ans fields style)
+(defun ddl:pick-title-blocks ( / first block-name attrs config selected ents ent rows idx fields style)
   (ddl:step "pick-title-blocks")
   (setq first (ddl:pick-first-title-block))
   (if first
@@ -886,32 +886,19 @@
             attrs (ddl:get-attributes first))
       
       (if (null attrs)
-        ;; Truong hop block khong co attribute (vi du XRef)
+        ;; Truong hop block khong co attribute (vi du XRef) -> Chon MText thu cong luon
+        (setq fields (ddl:interactive-mtext-fields first))
+        ;; Truong hop block co attribute -> Hien popup luon
         (progn
-          (initget "Yes No")
-          (setq ans (getkword "\nKhung tên không có attribute (có thể là XRef). Bạn có muốn chọn MText/Text thủ công để trích xuất? [Yes/No] <Yes>: "))
-          (if (or (null ans) (= ans "Yes"))
-            (setq fields (ddl:interactive-mtext-fields first))
-          )
-        )
-        ;; Truong hop block co attribute
-        (progn
-          (initget "Yes No")
-          (setq ans (getkword "\nKhung tên có attribute. Bạn muốn trích xuất từ Attribute [Yes] hay trích xuất bằng MText chọn thủ công [No]? [Yes/No] <Yes>: "))
-          (if (or (null ans) (= ans "Yes"))
+          (setq config (ddl:configure-extraction attrs block-name)
+                selected (car config)
+                style (cadr config))
+          (if selected
             (progn
-              (setq config (ddl:configure-extraction attrs block-name)
-                    selected (car config)
-                    style (cadr config))
-              (if selected
-                (progn
-                  (setq *ddl-interactive-fields* nil)
-                  (setq *ddl-selected-headers* (append '("STT" "LAYOUT" "BLOCK") selected))
-                  (setq *ddl-selected-headers* (append *ddl-selected-headers* '("HANDLE")))
-                )
-              )
+              (setq *ddl-interactive-fields* nil)
+              (setq *ddl-selected-headers* (append '("STT" "LAYOUT" "BLOCK") selected))
+              (setq *ddl-selected-headers* (append *ddl-selected-headers* '("HANDLE")))
             )
-            (setq fields (ddl:interactive-mtext-fields first))
           )
         )
       )

@@ -16,6 +16,7 @@
 (setq *ddl-last-table-point* nil)
 (setq *ddl-selected-headers* nil)
 (setq *ddl-table-style* nil)
+(setq *ddl-interactive-fields* nil)
 (setq *ddl-debug-step* "")
 (setq *ddl-config-attrs* nil)
 (setq *ddl-config-selected* nil)
@@ -139,20 +140,136 @@
 )
 
 (defun ddl:row-from-block (ent index mtext-values / dxf attrs row pair)
+  (if *ddl-interactive-fields*
+    (ddl:row-from-interactive-fields ent index *ddl-interactive-fields*)
+    (progn
+      (setq dxf (entget ent)
+            attrs (ddl:get-attributes ent))
+      (setq row (list
+        (cons "STT" (itoa index))
+        (cons "LAYOUT" (ddl:entity-layout-name dxf))
+        (cons "BLOCK" (ddl:block-name ent))
+        (cons "HANDLE" (cdr (assoc 5 dxf)))
+        (cons "_ATTRS" attrs)
+      ))
+      (foreach pair attrs
+        (setq row (append row (list pair)))
+      )
+      (if mtext-values
+        (setq row (ddl:add-mtext-values-to-row row mtext-values))
+      )
+      row
+    )
+  )
+)
+
+(defun ddl:wcs->local (p ins rot sx sy / dx dy cos-rot sin-rot rx ry)
+  (setq dx (- (car p) (car ins))
+        dy (- (cadr p) (cadr ins))
+        cos-rot (cos (- rot))
+        sin-rot (sin (- rot))
+        rx (+ (* dx cos-rot) (* dy sin-rot))
+        ry (- (* dy cos-rot) (* dx sin-rot)))
+  (list (/ rx sx) (/ ry sy))
+)
+
+(defun ddl:local->wcs (local ins rot sx sy / lx ly cos-rot sin-rot rx ry)
+  (setq lx (* (car local) sx)
+        ly (* (cadr local) sy)
+        cos-rot (cos rot)
+        sin-rot (sin rot)
+        rx (- (* lx cos-rot) (* ly sin-rot))
+        ry (+ (* lx sin-rot) (* ly cos-rot)))
+  (list (+ rx (car ins)) (+ ry (cadr ins)) 0.0)
+)
+
+(defun ddl:find-text-near (pt layout space tolerance / ss idx ent text-pt dist best-ent min-dist dxf)
+  (setq ss (ssget "_X" (list '(0 . "TEXT,MTEXT") (cons 410 layout) (cons 67 space))))
+  (if ss
+    (progn
+      (setq idx 0
+            min-dist tolerance
+            best-ent nil)
+      (while (< idx (sslength ss))
+        (setq ent (ssname ss idx)
+              dxf (entget ent)
+              text-pt (cdr (assoc 10 dxf))
+              dist (distance (list (car pt) (cadr pt)) (list (car text-pt) (cadr text-pt))))
+        (if (< dist min-dist)
+          (setq min-dist dist
+                best-ent ent)
+        )
+        (setq idx (1+ idx))
+      )
+    )
+  )
+  best-ent
+)
+
+(defun ddl:interactive-mtext-fields (ins-ent / ins-dxf ins-pt ins-rot ins-sx ins-sy done idx fields picked-ent text-val col-name text-pt opt-vec)
+  (setq ins-dxf (entget ins-ent)
+        ins-pt (cdr (assoc 10 ins-dxf))
+        ins-rot (cdr (assoc 50 ins-dxf))
+        ins-sx (cdr (assoc 41 ins-dxf))
+        ins-sy (cdr (assoc 42 ins-dxf))
+        idx 1
+        done nil)
+  (if (null ins-rot) (setq ins-rot 0.0))
+  (if (null ins-sx) (setq ins-sx 1.0))
+  (if (null ins-sy) (setq ins-sy 1.0))
+  (princ "\n--- DINH NGHIA CAC COT CAN TRICH XUAT BANG CACH CHON TEXT/MTEXT ---")
+  (princ "\nNhap chon cac doi tuong Text/MText tren khung ten mau theo thu tu cot.")
+  (while (not done)
+    (setq picked-ent (car (entsel (strcat "\nChon Text/MText cho cot thu " (itoa idx) " (hoac Enter de hoan thanh): "))))
+    (if picked-ent
+      (if (member (cdr (assoc 0 (entget picked-ent))) '("TEXT" "MTEXT"))
+        (progn
+          (setq text-val (ddl:text-value picked-ent))
+          (princ (strcat "\n-> Da chon Text voi noi dung hien tai: \"" text-val "\""))
+          (setq col-name (getstring T "\nNhap ten cot cho du lieu nay (vi du: STT, TEN BAN VE): "))
+          (if (= col-name "")
+            (setq col-name (strcat "COT_" (itoa idx)))
+          )
+          (setq text-pt (cdr (assoc 10 (entget picked-ent)))
+                opt-vec (ddl:wcs->local text-pt ins-pt ins-rot ins-sx ins-sy)
+                fields (append fields (list (list col-name opt-vec)))
+                idx (1+ idx))
+        )
+        (princ "\n-> Doi tuong duoc chon khong phai la TEXT hoac MTEXT. Hay chon lai.")
+      )
+      (setq done T)
+    )
+  )
+  fields
+)
+
+(defun ddl:row-from-interactive-fields (ent index fields / dxf ins-pt ins-rot ins-sx ins-sy layout space avg-scale tol row pair col-name local-vec target-pt text-ent text-val)
   (setq dxf (entget ent)
-        attrs (ddl:get-attributes ent))
+        ins-pt (cdr (assoc 10 dxf))
+        ins-rot (cdr (assoc 50 dxf))
+        ins-sx (cdr (assoc 41 dxf))
+        ins-sy (cdr (assoc 42 dxf))
+        layout (cdr (assoc 410 dxf))
+        space (cdr (assoc 67 dxf)))
+  (if (null ins-rot) (setq ins-rot 0.0))
+  (if (null ins-sx) (setq ins-sx 1.0))
+  (if (null ins-sy) (setq ins-sy 1.0))
+  (if (null space) (setq space 0))
+  (setq avg-scale (/ (+ (abs ins-sx) (abs ins-sy)) 2.0)
+        tol (* 20.0 avg-scale))
   (setq row (list
     (cons "STT" (itoa index))
-    (cons "LAYOUT" (ddl:entity-layout-name dxf))
+    (cons "LAYOUT" layout)
     (cons "BLOCK" (ddl:block-name ent))
     (cons "HANDLE" (cdr (assoc 5 dxf)))
-    (cons "_ATTRS" attrs)
   ))
-  (foreach pair attrs
-    (setq row (append row (list pair)))
-  )
-  (if mtext-values
-    (setq row (ddl:add-mtext-values-to-row row mtext-values))
+  (foreach pair fields
+    (setq col-name (car pair)
+          local-vec (cadr pair)
+          target-pt (ddl:local->wcs local-vec ins-pt ins-rot ins-sx ins-sy)
+          text-ent (ddl:find-text-near target-pt layout space tol)
+          text-val (if text-ent (ddl:text-value text-ent) ""))
+    (setq row (append row (list (cons col-name text-val))))
   )
   row
 )
@@ -296,8 +413,12 @@
 )
 
 (defun ddl:dialog-refresh ()
-  (ddl:dialog-refresh-list "tag_list" (mapcar 'ddl:dcl-safe (ddl:dialog-available-labels)))
-  (ddl:dialog-refresh-list "tag_extract" (mapcar 'ddl:dcl-safe (ddl:dialog-selected-labels)))
+  (if *ddl-config-attrs*
+    (progn
+      (ddl:dialog-refresh-list "tag_list" (mapcar 'ddl:dcl-safe (ddl:dialog-available-labels)))
+      (ddl:dialog-refresh-list "tag_extract" (mapcar 'ddl:dcl-safe (ddl:dialog-selected-labels)))
+    )
+  )
 )
 
 (defun ddl:dialog-add (value / indexes idx pair tag)
@@ -499,35 +620,39 @@
       (write-line "      }" stream)
       (write-line "    }" stream)
       ;; Tag Data section
-      (write-line "    : boxed_column {" stream)
-      (write-line "      label = \"Tag Data\";" stream)
-      (write-line "      : column {" stream)
-      (write-line "        : row {" stream)
-      ;; Left: Available tags
-      (write-line "          : column {" stream)
-      (write-line "            : text { label = \"Available Tags\"; }" stream)
-      (write-line "            : list_box { key = \"tag_list\"; width = 32; height = 10; multiple_select = true; }" stream)
-      (write-line "          }" stream)
-      ;; Center: Add/Remove buttons
-      (write-line "          : column {" stream)
-      (write-line "            alignment = centered;" stream)
-      (write-line "            fixed_width = true;" stream)
-      (write-line "            spacer;" stream)
-      (write-line "            spacer;" stream)
-      (write-line "            : button { key = \"add\"; label = \"  >>  \"; width = 10; fixed_width = true; alignment = centered; }" stream)
-      (write-line "            spacer_1;" stream)
-      (write-line "            : button { key = \"remove\"; label = \"  <<  \"; width = 10; fixed_width = true; alignment = centered; }" stream)
-      (write-line "            spacer;" stream)
-      (write-line "          }" stream)
-      ;; Right: Selected tags
-      (write-line "          : column {" stream)
-      (write-line "            : text { label = \"Selected Tags\"; }" stream)
-      (write-line "            : list_box { key = \"tag_extract\"; width = 32; height = 10; }" stream)
-      (write-line "          }" stream)
-      (write-line "        }" stream)
-      (write-line "        spacer;" stream)
-      (write-line "      }" stream)
-      (write-line "    }" stream)
+      (if attrs
+        (progn
+          (write-line "    : boxed_column {" stream)
+          (write-line "      label = \"Tag Data\";" stream)
+          (write-line "      : column {" stream)
+          (write-line "        : row {" stream)
+          ;; Left: Available tags
+          (write-line "          : column {" stream)
+          (write-line "            : text { label = \"Available Tags\"; }" stream)
+          (write-line "            : list_box { key = \"tag_list\"; width = 32; height = 10; multiple_select = true; }" stream)
+          (write-line "          }" stream)
+          ;; Center: Add/Remove buttons
+          (write-line "          : column {" stream)
+          (write-line "            alignment = centered;" stream)
+          (write-line "            fixed_width = true;" stream)
+          (write-line "            spacer;" stream)
+          (write-line "            spacer;" stream)
+          (write-line "            : button { key = \"add\"; label = \"  >>  \"; width = 10; fixed_width = true; alignment = centered; }" stream)
+          (write-line "            spacer_1;" stream)
+          (write-line "            : button { key = \"remove\"; label = \"  <<  \"; width = 10; fixed_width = true; alignment = centered; }" stream)
+          (write-line "            spacer;" stream)
+          (write-line "          }" stream)
+          ;; Right: Selected tags
+          (write-line "          : column {" stream)
+          (write-line "            : text { label = \"Selected Tags\"; }" stream)
+          (write-line "            : list_box { key = \"tag_extract\"; width = 32; height = 10; }" stream)
+          (write-line "          }" stream)
+          (write-line "        }" stream)
+          (write-line "        spacer;" stream)
+          (write-line "      }" stream)
+          (write-line "    }" stream)
+        )
+      )
       ;; Table Format section
       (write-line "    : boxed_row {" stream)
       (write-line "      label = \"Table Format\";" stream)
@@ -601,7 +726,7 @@
     (ddl:style-value "SECOND_LANG")
   )
   (setq dcl-file (ddl:temp-dcl-path))
-  (if (and attrs (ddl:write-field-dcl dcl-file attrs))
+  (if (ddl:write-field-dcl dcl-file attrs)
     (progn
       (setq *ddl-config-attrs* attrs
             *ddl-config-selected* nil
@@ -645,8 +770,12 @@
                 *ddl-temp-include-mtext* nil
                 *ddl-temp-second-lang-idx* nil)
           
-          (action_tile "add" "(ddl:dialog-add (get_tile \"tag_list\"))")
-          (action_tile "remove" "(ddl:dialog-remove (get_tile \"tag_extract\"))")
+          (if attrs
+            (progn
+              (action_tile "add" "(ddl:dialog-add (get_tile \"tag_list\"))")
+              (action_tile "remove" "(ddl:dialog-remove (get_tile \"tag_extract\"))")
+            )
+          )
           (action_tile "to_excel" "(progn (ddl:save-dialog-tiles) (done_dialog 2))")
           (action_tile "to_csv" "(progn (ddl:save-dialog-tiles) (done_dialog 4))")
           (action_tile "to_table" "(progn (ddl:save-dialog-tiles) (done_dialog 3))")
@@ -694,7 +823,10 @@
       (vl-file-delete dcl-file)
     )
   )
-  (if tags (list tags style) nil)
+  (if (or tags *ddl-interactive-fields*)
+    (list (if tags tags (mapcar 'car *ddl-interactive-fields*)) style)
+    nil
+  )
 )
 
 (defun ddl:text-value (ent / dxf type result pair)
@@ -737,28 +869,65 @@
   (while (and (null ent) (setq picked (entsel "\nChọn block khung tên mẫu: ")))
     (ddl:step "pick-first-after-entsel")
     (if (ddl:valid-title-block-p (car picked))
-      (setq ent (car picked))
-      (princ "\n-> Hãy chọn block INSERT có attribute.")
+       (setq ent (car picked))
+       (princ "\n-> Hãy chọn block INSERT hoặc XRef khung tên mẫu.")
     )
     (ddl:step "pick-first-before-next-loop")
   )
   ent
 )
 
-(defun ddl:pick-title-blocks ( / first block-name attrs config selected ents ent rows idx)
+(defun ddl:pick-title-blocks ( / first block-name attrs config selected ents ent rows idx ans fields style)
   (ddl:step "pick-title-blocks")
   (setq first (ddl:pick-first-title-block))
   (if first
     (progn
-      (ddl:step "read-sample-attributes")
       (setq block-name (ddl:block-name first)
-            attrs (ddl:get-attributes first)
-            config (ddl:configure-extraction attrs block-name)
-            selected (car config))
-      (if selected
+            attrs (ddl:get-attributes first))
+      
+      (if (null attrs)
+        ;; Truong hop block khong co attribute (vi du XRef)
         (progn
-          (setq *ddl-selected-headers* (append '("STT" "LAYOUT" "BLOCK") selected))
-          (setq *ddl-selected-headers* (append *ddl-selected-headers* '("HANDLE")))
+          (initget "Yes No")
+          (setq ans (getkword "\nKhung tên không có attribute (có thể là XRef). Bạn có muốn chọn MText/Text thủ công để trích xuất? [Yes/No] <Yes>: "))
+          (if (or (null ans) (= ans "Yes"))
+            (setq fields (ddl:interactive-mtext-fields first))
+          )
+        )
+        ;; Truong hop block co attribute
+        (progn
+          (initget "Yes No")
+          (setq ans (getkword "\nKhung tên có attribute. Bạn muốn trích xuất từ Attribute [Yes] hay trích xuất bằng MText chọn thủ công [No]? [Yes/No] <Yes>: "))
+          (if (or (null ans) (= ans "Yes"))
+            (progn
+              (setq config (ddl:configure-extraction attrs block-name)
+                    selected (car config)
+                    style (cadr config))
+              (if selected
+                (progn
+                  (setq *ddl-interactive-fields* nil)
+                  (setq *ddl-selected-headers* (append '("STT" "LAYOUT" "BLOCK") selected))
+                  (setq *ddl-selected-headers* (append *ddl-selected-headers* '("HANDLE")))
+                )
+              )
+            )
+            (setq fields (ddl:interactive-mtext-fields first))
+          )
+        )
+      )
+      
+      (if fields
+        (progn
+          (setq *ddl-interactive-fields* fields)
+          (setq *ddl-selected-headers* (append '("STT" "LAYOUT" "BLOCK") (mapcar 'car fields) '("HANDLE")))
+          ;; Show the table style configuration dialog
+          (setq config (ddl:configure-extraction nil block-name)
+                style (cadr config))
+        )
+      )
+      
+      (if *ddl-selected-headers*
+        (progn
           (setq ents (ddl:sort-title-blocks (ddl:all-title-blocks-by-name block-name))
                 idx 1)
           (foreach ent ents

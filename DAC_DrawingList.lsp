@@ -988,16 +988,21 @@
   result
 )
 
-(defun ddl:drawing-number-header (headers / result header)
+(defun ddl:drawing-number-header (headers / result header h-upper)
   (foreach header headers
+    (setq h-upper (strcase header))
     (if (and (null result)
              (or
-               (wcmatch (strcase header) "*DRAWING*NO*")
-               (wcmatch (strcase header) "*DWG*NO*")
-               (wcmatch (strcase header) "*SHEET*NO*")
-               (wcmatch (strcase header) "*SO*HIEU*")
-               (wcmatch (strcase header) "*SO*BAN*VE*")
-               (wcmatch (strcase header) "*NUMBER*")
+               (wcmatch h-upper "*DRAWING*NO*")
+               (wcmatch h-upper "*DWG*NO*")
+               (wcmatch h-upper "*SHEET*NO*")
+               (wcmatch h-upper "*SO*HIEU*")
+               (wcmatch h-upper "*SỐ*HIỆU*")
+               (wcmatch h-upper "*SO*BAN*VE*")
+               (wcmatch h-upper "*SỐ*BẢN*VẼ*")
+               (wcmatch h-upper "*NUMBER*")
+               (wcmatch h-upper "*KÝ*HIỆU*")
+               (wcmatch h-upper "*KY*HIEU*")
              ))
       (setq result header)
     )

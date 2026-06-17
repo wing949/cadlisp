@@ -562,11 +562,12 @@
       (write-line "    }" stream)
       ;; Bottom buttons
       (write-line "    : row {" stream)
-      (write-line "      : button { key = \"to_excel\"; label = \"Write Excel\"; width = 16; fixed_width = true; }" stream)
-      (write-line "      : button { key = \"to_table\"; label = \"Create Table\"; width = 16; fixed_width = true; }" stream)
+      (write-line "      : button { key = \"to_excel\"; label = \"Write Excel\"; width = 14; fixed_width = true; }" stream)
+      (write-line "      : button { key = \"to_csv\"; label = \"Write CSV\"; width = 14; fixed_width = true; }" stream)
+      (write-line "      : button { key = \"to_table\"; label = \"Create Table\"; width = 14; fixed_width = true; }" stream)
       (write-line "      spacer;" stream)
-      (write-line "      : button { key = \"accept\"; label = \"OK\"; is_default = true; width = 16; fixed_width = true; }" stream)
-      (write-line "      : button { key = \"cancel\"; label = \"Cancel\"; is_cancel = true; width = 16; fixed_width = true; }" stream)
+      (write-line "      : button { key = \"accept\"; label = \"OK\"; is_default = true; width = 14; fixed_width = true; }" stream)
+      (write-line "      : button { key = \"cancel\"; label = \"Cancel\"; is_cancel = true; width = 14; fixed_width = true; }" stream)
       (write-line "    }" stream)
       (write-line "  }" stream)
       (write-line "}" stream)
@@ -647,13 +648,14 @@
           (action_tile "add" "(ddl:dialog-add (get_tile \"tag_list\"))")
           (action_tile "remove" "(ddl:dialog-remove (get_tile \"tag_extract\"))")
           (action_tile "to_excel" "(progn (ddl:save-dialog-tiles) (done_dialog 2))")
+          (action_tile "to_csv" "(progn (ddl:save-dialog-tiles) (done_dialog 4))")
           (action_tile "to_table" "(progn (ddl:save-dialog-tiles) (done_dialog 3))")
           (action_tile "accept" "(progn (ddl:save-dialog-tiles) (done_dialog 1))")
           (action_tile "cancel" "(done_dialog 0)")
           
           (ddl:step "config-start-dialog")
           (setq dcl-result (start_dialog))
-          (if (member dcl-result '(1 2 3))
+          (if (member dcl-result '(1 2 3 4))
             (progn
               (ddl:step "config-read-result")
               (setq tags *ddl-config-selected*)
@@ -670,7 +672,12 @@
                       ((= *ddl-temp-second-lang-idx* "3") "KOR")
                       (T "ENG")
                     )
-                    output-mode (cond ((= dcl-result 2) "EXCEL") ((= dcl-result 3) "TABLE") (T "OK")))
+                    output-mode (cond
+                      ((= dcl-result 2) "EXCEL")
+                      ((= dcl-result 4) "CSV")
+                      ((= dcl-result 3) "TABLE")
+                      (T "OK")
+                    ))
               (ddl:set-table-style font text-height row-height col-width include-mtext second-lang)
               (setq *ddl-table-style*
                 (append
@@ -1605,13 +1612,14 @@
     (progn
       (setq output-mode (ddl:style-value "OUTPUT_MODE"))
       (setq *ddl-last-handles* (mapcar '(lambda (row) (cdr (assoc "HANDLE" row))) rows))
-      (if (/= output-mode "EXCEL")
+      (if (and (/= output-mode "EXCEL") (/= output-mode "CSV"))
         (setq table-ok (ddl:export-table rows))
       )
-      (if (/= output-mode "TABLE")
+      (if (or (= output-mode "EXCEL") (= output-mode "CSV") (= output-mode "OK"))
         (progn
-          (setq default-path (strcat (getvar "DWGPREFIX") (vl-filename-base (getvar "DWGNAME")) "_DrawingList.xlsx"))
-          (setq xlsx-path (getfiled "Lưu danh mục bản vẽ" default-path "xlsx;csv" 1))
+          (setq default-path (strcat (getvar "DWGPREFIX") (vl-filename-base (getvar "DWGNAME"))
+                                     (if (= output-mode "CSV") "_DrawingList.csv" "_DrawingList.xlsx")))
+          (setq xlsx-path (getfiled "Lưu danh mục bản vẽ" default-path (if (= output-mode "CSV") "csv" "xlsx") 1))
           (if xlsx-path
             (progn
               (if (= (strcase (vl-filename-extension xlsx-path)) ".CSV")
@@ -1625,12 +1633,8 @@
       )
       (cond
         ((and (= output-mode "TABLE") table-ok) (princ "\n-> Đã tạo CAD Table."))
-        ((and (= output-mode "EXCEL") xlsx-ok)
-          (if (= (strcase (vl-filename-extension *ddl-last-xlsx*)) ".CSV")
-            (princ "\n-> Đã xuất danh mục ra file CSV.")
-            (princ "\n-> Đã xuất Excel XLSX.")
-          )
-        )
+        ((and (= output-mode "EXCEL") xlsx-ok) (princ "\n-> Đã xuất Excel XLSX."))
+        ((and (= output-mode "CSV") xlsx-ok) (princ "\n-> Đã xuất danh mục ra file CSV."))
         ((and table-ok xlsx-ok)
           (if (= (strcase (vl-filename-extension *ddl-last-xlsx*)) ".CSV")
             (princ "\n-> Đã tạo CAD Table và xuất file CSV.")

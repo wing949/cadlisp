@@ -402,36 +402,84 @@
   result
 )
 
-(defun ddl:sort-title-blocks (ents / decorated result item ent pt)
-  (foreach ent ents
-    (setq pt (ddl:insert-point ent)
-          decorated
-            (append decorated
-              (list
-                (list
-                  (- (cadr pt))
-                  (car pt)
-                  ent
-                )
-              )
-            )
+(defun ddl:get-block-height (ent / obj minpt maxpt result p1 p2)
+  (setq obj (vlax-ename->vla-object ent))
+  (setq result (vl-catch-all-apply 'vla-getboundingbox (list obj 'minpt 'maxpt)))
+  (if (not (vl-catch-all-error-p result))
+    (progn
+      (setq p1 (vlax-safearray->list minpt)
+            p2 (vlax-safearray->list maxpt))
+      (abs (- (cadr p2) (cadr p1)))
     )
+    0.0
   )
-  (setq decorated
-    (vl-sort decorated
-      '(lambda (a b)
-        (cond
-          ((< (car a) (car b)) T)
-          ((> (car a) (car b)) nil)
-          (T (< (cadr a) (cadr b)))
+)
+
+(defun ddl:sort-title-blocks (ents / decorated result item ent pt heights valid-heights avg-h row-tolerance sorted-by-y rows current-row sorted-list row)
+  (if (null ents)
+    nil
+    (progn
+      ;; Calculate average height of block references to determine row tolerance
+      (setq heights (mapcar 'ddl:get-block-height ents)
+            valid-heights (vl-remove 0.0 heights)
+            avg-h (if valid-heights
+                    (/ (apply '+ valid-heights) (float (length valid-heights)))
+                    100.0
+                  )
+            row-tolerance (* avg-h 0.5)
+            decorated nil)
+      
+      ;; Decorate: list of (list pt ent)
+      (foreach ent ents
+        (setq pt (ddl:insert-point ent))
+        (if pt
+          (setq decorated (append decorated (list (list pt ent))))
         )
       )
+      
+      ;; Sort by Y descending first (top-to-bottom)
+      (setq sorted-by-y
+        (vl-sort decorated
+          '(lambda (a b) (> (cadr (car a)) (cadr (car b))))
+        )
+      )
+      
+      ;; Group into rows based on tolerance
+      (setq rows nil
+            current-row nil)
+      (foreach item sorted-by-y
+        (if (null current-row)
+          (setq current-row (list item))
+          (if (< (abs (- (cadr (car item)) (cadr (car (car current-row))))) row-tolerance)
+            (setq current-row (cons item current-row))
+            (progn
+              (setq rows (cons current-row rows))
+              (setq current-row (list item))
+            )
+          )
+        )
+      )
+      (if current-row (setq rows (cons current-row rows)))
+      (setq rows (reverse rows))
+      
+      ;; For each row, sort left-to-right (X ascending)
+      (setq sorted-list nil)
+      (foreach row rows
+        (setq row
+          (vl-sort row
+            '(lambda (a b) (< (car (car a)) (car (car b))))
+          )
+        )
+        (setq sorted-list (append sorted-list row))
+      )
+      
+      ;; Extract entities
+      (foreach item sorted-list
+        (setq result (append result (list (cadr item))))
+      )
+      result
     )
   )
-  (foreach item decorated
-    (setq result (append result (list (caddr item))))
-  )
-  result
 )
 
 (defun ddl:index-string (count / idx result)

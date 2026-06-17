@@ -1835,7 +1835,45 @@
   )
 )
 
-(defun ddl:export-xlsx (rows path / excel books book sheets sheet visible-headers headers r c row header values value columns result native-path total-cols last-col-idx range borders font interior rows-coll cols-coll row-item col-item ext fmt-code title-text total-rows)
+(defun ddl:excel-header-display-text (key)
+  (cond
+    ((= key "STT") (ddl:get-header-text "STT"))
+    ((ddl:is-drawing-number-header-p key) (ddl:get-header-text "NUMBER"))
+    ((= key "TÊN BẢN VẼ") "TÊN BẢN VẼ\nSHEET NAME")
+    ((= key "TÊN BẢN VẼ (NGÔN NGỮ 2)")
+      (cond
+        ((= (ddl:style-value "SECOND_LANG") "ENG") "TÊN BẢN VẼ\nSHEET NAME (ENG)")
+        ((= (ddl:style-value "SECOND_LANG") "CHI") "TÊN BẢN VẼ\n图纸名称 (CHI)")
+        ((= (ddl:style-value "SECOND_LANG") "JPN") "TÊN BẢN VẼ\n図面名称 (JPN)")
+        ((= (ddl:style-value "SECOND_LANG") "KOR") "TÊN BẢN VẼ\n도면명 (KOR)")
+        (T "TÊN BẢN VẼ\nSHEET NAME (2ND)")
+      ))
+    (T key)
+  )
+)
+
+(defun ddl:excel-header-to-key (header / h-upper)
+  (setq h-upper (strcase header))
+  (cond
+    ((wcmatch h-upper "*HANDLE*") "HANDLE")
+    ((wcmatch h-upper "*STT*") "STT")
+    ((or (wcmatch h-upper "*SỐ*HIỆU*") (wcmatch h-upper "*SO*HIEU*") (wcmatch h-upper "*SHEET*NUMBER*") (wcmatch h-upper "*DRAWING*NUMBER*") (wcmatch h-upper "*NUMBER*"))
+      "SỐ HIỆU BẢN VẼ")
+    ((wcmatch h-upper "*2ND*") "TÊN BẢN VẼ (NGÔN NGỮ 2)")
+    ((wcmatch h-upper "*ENG*") "TÊN BẢN VẼ (NGÔN NGỮ 2)")
+    ((wcmatch h-upper "*CHI*") "TÊN BẢN VẼ (NGÔN NGỮ 2)")
+    ((wcmatch h-upper "*JPN*") "TÊN BẢN VẼ (NGÔN NGỮ 2)")
+    ((wcmatch h-upper "*KOR*") "TÊN BẢN VẼ (NGÔN NGỮ 2)")
+    ((wcmatch h-upper "*图纸名称*") "TÊN BẢN VẼ (NGÔN NGỮ 2)")
+    ((wcmatch h-upper "*図面名称*") "TÊN BẢN VẼ (NGÔN NGỮ 2)")
+    ((wcmatch h-upper "*도면명*") "TÊN BẢN VẼ (NGÔN NGỮ 2)")
+    ((or (wcmatch h-upper "*TÊN*BẢN*VẼ*") (wcmatch h-upper "*TEN*BAN*VE*") (wcmatch h-upper "*SHEET*NAME*") (wcmatch h-upper "*DRAWING*NAME*"))
+      "TÊN BẢN VẼ")
+    (T header)
+  )
+)
+
+(defun ddl:export-xlsx (rows path / excel books book sheets sheet visible-headers headers r c row header values value columns result native-path total-cols range borders font interior rows-coll cols-coll row-item col-item ext fmt-code title-text total-rows cell1 cell2)
   (setq native-path (vl-string-translate "/" "\\" path))
   (setq excel (vl-catch-all-apply 'vlax-create-object (list "Excel.Application")))
   (if (vl-catch-all-error-p excel)
@@ -1872,18 +1910,31 @@
                 (progn
                   (princ "\n-> Đang khởi tạo dữ liệu và ghi vào Excel...")
                   
-                  ;; Determine headers
+                  ;; Columns setup:
+                  ;; Col 1: HANDLE (Hidden)
+                  ;; Col 2: Spacer (Visible, empty, width 8.43)
+                  ;; Col 3+: visible-headers
                   (setq visible-headers (ddl:visible-headers-for-rows rows)
-                        headers (append visible-headers '("HANDLE"))
-                        total-cols (length headers)
-                        last-col-idx total-cols)
+                        headers (append '("HANDLE" "SPACER") visible-headers)
+                        total-cols (length headers))
                   
-                  ;; 1. Write Title (Row 1)
+                  ;; Set Column 2 (Spacer) width to 8.43
+                  (setq cols-coll (vl-catch-all-apply 'vlax-get-property (list sheet 'Columns)))
+                  (if (and cols-coll (not (vl-catch-all-error-p cols-coll)))
+                    (progn
+                      (setq col-item (vl-catch-all-apply 'vlax-get-property (list cols-coll 'Item 2)))
+                      (if (and col-item (not (vl-catch-all-error-p col-item)))
+                        (vl-catch-all-apply 'vlax-put-property (list col-item 'ColumnWidth 8.43))
+                      )
+                    )
+                  )
+                  
+                  ;; 1. Write Title (Row 2)
                   (setq title-text (ddl:get-header-text "TITLE"))
-                  (ddl:excel-put-cell sheet 1 1 title-text)
+                  (ddl:excel-put-cell sheet 2 3 title-text) ; Write in Col 3 (STT)
                   
-                  ;; Merge Title across visible columns
-                  (setq range (ddl:excel-style-range sheet 1 1 1 (1- total-cols)))
+                  ;; Merge Title across Col 3 to Col total-cols
+                  (setq range (ddl:excel-style-range sheet 2 3 2 total-cols))
                   (if range
                     (progn
                       (vl-catch-all-apply 'vlax-invoke-method (list range 'Merge))
@@ -1900,26 +1951,28 @@
                     )
                   )
                   
-                  ;; Set Row 1 Height to 35
+                  ;; Set Row 2 Height to 35
                   (setq rows-coll (vl-catch-all-apply 'vlax-get-property (list sheet 'Rows)))
                   (if (and rows-coll (not (vl-catch-all-error-p rows-coll)))
                     (progn
-                      (setq row-item (vl-catch-all-apply 'vlax-get-property (list rows-coll 'Item 1)))
+                      (setq row-item (vl-catch-all-apply 'vlax-get-property (list rows-coll 'Item 2)))
                       (if (and row-item (not (vl-catch-all-error-p row-item)))
                         (vl-catch-all-apply 'vlax-put-property (list row-item 'RowHeight 35))
                       )
                     )
                   )
                   
-                  ;; 2. Write Headers (Row 2)
-                  (setq c 1)
-                  (foreach header headers
-                    (ddl:excel-put-cell sheet 2 c header)
+                  ;; 2. Write Headers (Row 3)
+                  (ddl:excel-put-cell sheet 3 1 "HANDLE")
+                  (ddl:excel-put-cell sheet 3 2 "")
+                  (setq c 3)
+                  (foreach header visible-headers
+                    (ddl:excel-put-cell sheet 3 c (ddl:excel-header-display-text header))
                     (setq c (1+ c))
                   )
                   
-                  ;; Style Headers (A2 to last col Row 2)
-                  (setq range (ddl:excel-style-range sheet 2 1 2 total-cols))
+                  ;; Style Headers (Col 3 to total-cols, Row 3)
+                  (setq range (ddl:excel-style-range sheet 3 3 3 total-cols))
                   (if range
                     (progn
                       (setq font (vl-catch-all-apply 'vlax-get-property (list range 'Font)))
@@ -1938,23 +1991,27 @@
                     )
                   )
                   
-                  ;; Set Row 2 Height to 25
+                  ;; Set Row 3 Height to 25
                   (if (and rows-coll (not (vl-catch-all-error-p rows-coll)))
                     (progn
-                      (setq row-item (vl-catch-all-apply 'vlax-get-property (list rows-coll 'Item 2)))
+                      (setq row-item (vl-catch-all-apply 'vlax-get-property (list rows-coll 'Item 3)))
                       (if (and row-item (not (vl-catch-all-error-p row-item)))
                         (vl-catch-all-apply 'vlax-put-property (list row-item 'RowHeight 25))
                       )
                     )
                   )
                   
-                  ;; 3. Write Data (Row 3+)
-                  (setq r 3)
+                  ;; 3. Write Data (Row 4+)
+                  (setq r 4)
                   (foreach row rows
-                    (setq values (ddl:values-for-row row headers)
-                          c 1)
-                    (foreach value values
-                      (ddl:excel-put-cell sheet r c value)
+                    ;; Col 1: HANDLE
+                    (ddl:excel-put-cell sheet r 1 (ddl:row-value row "HANDLE"))
+                    ;; Col 2: Spacer
+                    (ddl:excel-put-cell sheet r 2 "")
+                    ;; Col 3+: visible values
+                    (setq c 3)
+                    (foreach header visible-headers
+                      (ddl:excel-put-cell sheet r c (ddl:row-value row header))
                       (setq c (1+ c))
                     )
                     
@@ -1973,17 +2030,17 @@
                   (setq total-rows (1- r))
                   (princ (strcat "\n-> Đã ghi xong " (itoa (length rows)) " dòng dữ liệu."))
                   
-                  ;; 4. Style Data rows (Align STT center, others left)
-                  ;; STT (Col 1, Row 3 to total-rows)
-                  (setq range (ddl:excel-style-range sheet 3 1 total-rows 1))
+                  ;; 4. Style Data rows
+                  ;; STT (Col 3, Row 4 to total-rows)
+                  (setq range (ddl:excel-style-range sheet 4 3 total-rows 3))
                   (if range
                     (progn
                       (vl-catch-all-apply 'vlax-put-property (list range 'HorizontalAlignment -4108))
                       (vl-catch-all-apply 'vlax-put-property (list range 'VerticalAlignment -4108))
                     )
                   )
-                  ;; Others (Col 2 to total-cols, Row 3 to total-rows)
-                  (setq range (ddl:excel-style-range sheet 3 2 total-rows total-cols))
+                  ;; Others (Col 4 to total-cols, Row 4 to total-rows)
+                  (setq range (ddl:excel-style-range sheet 4 4 total-rows total-cols))
                   (if range
                     (progn
                       (vl-catch-all-apply 'vlax-put-property (list range 'HorizontalAlignment -4131)) ; Left
@@ -1991,8 +2048,8 @@
                     )
                   )
                   
-                  ;; 5. Draw Borders for the entire table (Row 1 to total-rows, Col 1 to total-cols - 1)
-                  (setq range (ddl:excel-style-range sheet 1 1 total-rows (1- total-cols)))
+                  ;; 5. Draw Borders for the visible table (Row 2 to total-rows, Col 3 to total-cols)
+                  (setq range (ddl:excel-style-range sheet 2 3 total-rows total-cols))
                   (if range
                     (progn
                       (setq borders (vl-catch-all-apply 'vlax-get-property (list range 'Borders)))
@@ -2005,17 +2062,27 @@
                     )
                   )
                   
-                  ;; 6. AutoFit Column Widths
-                  (setq columns (vl-catch-all-apply 'vlax-get-property (list sheet 'Columns)))
-                  (if (not (vl-catch-all-error-p columns))
-                    (vl-catch-all-apply 'vlax-invoke-method (list columns 'AutoFit))
+                  ;; 6. AutoFit Column Widths (Col 3 onwards)
+                  (setq cell1 (ddl:excel-cell sheet 1 3)
+                        cell2 (ddl:excel-cell sheet 1 total-cols))
+                  (if (and cell1 cell2 (not (vl-catch-all-error-p cell1)) (not (vl-catch-all-error-p cell2)))
+                    (progn
+                      (setq range (vl-catch-all-apply 'vlax-get-property (list sheet 'Range cell1 cell2)))
+                      (if (and range (not (vl-catch-all-error-p range)))
+                        (progn
+                          (setq columns (vl-catch-all-apply 'vlax-get-property (list range 'Columns)))
+                          (if (and columns (not (vl-catch-all-error-p columns)))
+                            (vl-catch-all-apply 'vlax-invoke-method (list columns 'AutoFit))
+                          )
+                        )
+                      )
+                    )
                   )
                   
-                  ;; 7. Hide the HANDLE column (last-col-idx)
-                  (setq cols-coll (vl-catch-all-apply 'vlax-get-property (list sheet 'Columns)))
+                  ;; 7. Hide Column 1 (HANDLE)
                   (if (and cols-coll (not (vl-catch-all-error-p cols-coll)))
                     (progn
-                      (setq col-item (vl-catch-all-apply 'vlax-get-property (list cols-coll 'Item last-col-idx)))
+                      (setq col-item (vl-catch-all-apply 'vlax-get-property (list cols-coll 'Item 1)))
                       (if (and col-item (not (vl-catch-all-error-p col-item)))
                         (vl-catch-all-apply 'vlax-put-property (list col-item 'Hidden :vlax-true))
                       )
@@ -2048,7 +2115,7 @@
   )
 )
 
-(defun ddl:read-xlsx-records (path / excel books book sheets sheet row col headers data values value done native-path)
+(defun ddl:read-xlsx-records (path / excel books book sheets sheet row col headers data values value done native-path h-str key)
   (setq native-path (vl-string-translate "/" "\\" path))
   (setq excel (vl-catch-all-apply 'vlax-create-object (list "Excel.Application")))
   (if (vl-catch-all-error-p excel)
@@ -2065,13 +2132,18 @@
               (setq sheets (vl-catch-all-apply 'vlax-get-property (list book 'Worksheets))
                     sheet (if (vl-catch-all-error-p sheets) sheets (vl-catch-all-apply 'vlax-get-property (list sheets 'Item 1)))
                     col 1)
-              ;; Read headers from Row 2 (since Row 1 is the Title row)
-              (while (and (not (vl-catch-all-error-p sheet)) (< col 200) (/= (setq value (ddl:excel-cell-value sheet 2 col)) nil))
-                (setq headers (append headers (list (strcase (vl-princ-to-string value))))
+              ;; Read headers from Row 3 (since Row 1 is empty, Row 2 is the Title row, Row 3 is Header row)
+              (while (and (not (vl-catch-all-error-p sheet)) (< col 200) (/= (setq value (ddl:excel-cell-value sheet 3 col)) nil))
+                (setq h-str (vl-princ-to-string value))
+                (if (/= (vl-string-trim " \t\r\n" h-str) "")
+                  (setq key (ddl:excel-header-to-key h-str))
+                  (setq key "")
+                )
+                (setq headers (append headers (list key))
                       col (1+ col))
               )
-              ;; Read data starting from Row 3 (Row 1 is Title, Row 2 is Header)
-              (setq row 3)
+              ;; Read data starting from Row 4 (Row 1 empty, Row 2 Title, Row 3 Header)
+              (setq row 4)
               (while (and (< row 5000) (not done))
                 (setq col 1 values nil)
                 (while (<= col (length headers))

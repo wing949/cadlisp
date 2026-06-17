@@ -309,7 +309,7 @@
       (setq idx 0)
       (while (< idx (sslength ss))
         (setq ent (ssname ss idx))
-        (if (and (ddl:same-block-p ent block-name) (ddl:get-attributes ent))
+        (if (ddl:same-block-p ent block-name)
           (setq result (append result (list ent)))
         )
         (setq idx (1+ idx))

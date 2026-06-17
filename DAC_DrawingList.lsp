@@ -1968,7 +1968,7 @@
   )
 )
 
-(defun ddl:export-xlsx (rows path / excel books book sheets sheet visible-headers headers r c row header values value columns result native-path total-cols range borders font interior rows-coll cols-coll row-item col-item ext fmt-code title-text total-rows cell1 cell2 title2-idx cell entcol inside-horiz)
+(defun ddl:export-xlsx (rows path / excel books book sheets sheet visible-headers headers r c row header values value columns result native-path total-cols range borders font interior rows-coll cols-coll row-item col-item ext fmt-code title-text total-rows cell1 cell2 title2-idx cell entcol inside-horiz h-upper has-lang2)
   (setq native-path (vl-string-translate "/" "\\" path))
   (setq excel (vl-catch-all-apply 'vlax-create-object (list "Excel.Application")))
   (if (vl-catch-all-error-p excel)
@@ -2008,9 +2008,27 @@
                   ;; Columns setup:
                   ;; Col 1: HANDLE (Hidden)
                   ;; Col 2+: visible-headers
-                  (setq visible-headers (ddl:visible-headers-for-rows rows)
-                        headers (cons "HANDLE" visible-headers)
-                        total-cols (length headers))
+                  (setq visible-headers (ddl:visible-headers-for-rows rows))
+                  
+                  ;; Force headers order to always be: HANDLE, STT, SỐ HIỆU BẢN VẼ, TÊN BẢN VẼ, TÊN BẢN VẼ (NGÔN NGỮ 2)
+                  (setq headers (list "HANDLE" "STT" "SỐ HIỆU BẢN VẼ" "TÊN BẢN VẼ"))
+                  (setq has-lang2 nil)
+                  (foreach h visible-headers
+                    (if (= (strcase h) "TÊN BẢN VẼ (NGÔN NGỮ 2)")
+                      (setq has-lang2 T)
+                    )
+                  )
+                  (if has-lang2
+                    (setq headers (append headers (list "TÊN BẢN VẼ (NGÔN NGỮ 2)")))
+                  )
+                  ;; Append other custom/extra headers that are not part of the standard set
+                  (foreach h visible-headers
+                    (setq h-upper (strcase h))
+                    (if (not (member h-upper '("STT" "SỐ HIỆU BẢN VẼ" "TÊN BẢN VẼ" "TÊN BẢN VẼ (NGÔN NGỮ 2)")))
+                      (setq headers (append headers (list h)))
+                    )
+                  )
+                  (setq total-cols (length headers))
                   
                   ;; 1. Write Title (Row 1)
                   (ddl:excel-put-cell sheet 1 2 "DANH MỤC BẢN VẼ") ; Start at Col 2 (STT)
@@ -2248,12 +2266,23 @@
                   )
                   
                   ;; 8. Hide Column 1 (HANDLE) completely
-                  (setq cell (ddl:excel-cell sheet 1 1))
-                  (if (and cell (not (vl-catch-all-error-p cell)))
+                  (setq cols-coll (vl-catch-all-apply 'vlax-get-property (list sheet 'Columns)))
+                  (if (and cols-coll (not (vl-catch-all-error-p cols-coll)))
                     (progn
-                      (setq entcol (vl-catch-all-apply 'vlax-get-property (list cell 'EntireColumn)))
-                      (if (and entcol (not (vl-catch-all-error-p entcol)))
-                        (vl-catch-all-apply 'vlax-put-property (list entcol 'Hidden :vlax-true))
+                      ;; Try getting column via "A"
+                      (setq col-item (vl-catch-all-apply 'vlax-get-property (list cols-coll 'Item "A")))
+                      ;; Fallback to 1
+                      (if (or (null col-item) (vl-catch-all-error-p col-item))
+                        (setq col-item (vl-catch-all-apply 'vlax-get-property (list cols-coll 'Item 1)))
+                      )
+                      (if (and col-item (not (vl-catch-all-error-p col-item)))
+                        (progn
+                          ;; Set ColumnWidth to 0.0 to hide it visually
+                          (vl-catch-all-apply 'vlax-put-property (list col-item 'ColumnWidth 0.0))
+                          ;; Set Hidden to True via both methods
+                          (vl-catch-all-apply 'vlax-put-property (list col-item 'Hidden :vlax-true))
+                          (vl-catch-all-apply 'vla-put-hidden (list col-item :vlax-true))
+                        )
                       )
                     )
                   )
